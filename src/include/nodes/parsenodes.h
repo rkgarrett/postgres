@@ -2729,6 +2729,7 @@ typedef struct ReindexStmt
 	const char *name;			/* name of database to reindex */
 	bool		do_system;		/* include system tables in database case */
 	bool		do_user;		/* include user tables in database case */
+	bool		concurrent;		/* reindex concurrently? */
 } ReindexStmt;
 
 /* ----------------------
