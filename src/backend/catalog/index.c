@@ -1123,10 +1123,11 @@ index_create(Relation heapRelation,
 /*
  * index_concurrent_create
  *
- * Create an index based on the given one that will be used for concurrent
- * operations. The index is inserted into catalogs and needs to be built later
- * on. This is called during concurrent index processing. The heap relation
- * on which is based the index needs to be closed by the caller.
+ * Create a concurrent index based on the definition of the one provided by
+ * caller that will be used for concurrent operations. The index is inserted
+ * into catalogs and needs to be built later on. This is called during
+ * concurrent index processing. The heap relation on which is based the index
+ * needs to be closed by the caller.
  */
 Oid
 index_concurrent_create(Relation heapRelation, Oid indOid, char *concurrentName)
