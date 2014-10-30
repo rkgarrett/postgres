@@ -666,6 +666,7 @@ UpdateIndexRelation(Oid indexoid,
  * classObjectId: array of index opclass OIDs, one per index column
  * coloptions: array of per-index-column indoption settings
  * reloptions: AM-specific options
+ * tupdesc: Tuple descriptor used for the index if defined
  * isprimary: index is a PRIMARY KEY
  * isconstraint: index is owned by PRIMARY KEY, UNIQUE, or EXCLUSION constraint
  * deferrable: constraint is DEFERRABLE
@@ -699,6 +700,7 @@ index_create(Relation heapRelation,
 			 Oid *classObjectId,
 			 int16 *coloptions,
 			 Datum reloptions,
+			 TupleDesc tupdesc,
 			 bool isprimary,
 			 bool isconstraint,
 			 bool deferrable,
@@ -807,14 +809,21 @@ index_create(Relation heapRelation,
 	}
 
 	/*
-	 * construct tuple descriptor for index tuples
+	 * construct tuple descriptor for index tuples if nothing is passed
+	 * by caller.
 	 */
-	indexTupDesc = ConstructTupleDescriptor(heapRelation,
-											indexInfo,
-											indexColNames,
-											accessMethodObjectId,
-											collationObjectId,
-											classObjectId);
+	if (tupdesc == NULL)
+		indexTupDesc = ConstructTupleDescriptor(heapRelation,
+												indexInfo,
+												indexColNames,
+												accessMethodObjectId,
+												collationObjectId,
+												classObjectId);
+	else
+	{
+		Assert(indexColNames == NIL);
+		indexTupDesc = tupdesc;
+	}
 
 	/*
 	 * Allocate an OID for the index, unless we were told what to use.
@@ -1137,12 +1146,9 @@ index_concurrent_create(Relation heapRelation, Oid indOid, char *concurrentName)
 	Relation	indexRelation;
 	IndexInfo  *indexInfo;
 	Oid			concurrentOid = InvalidOid;
-	List	   *columnNames = NIL;
-	List	   *indexprs = NIL;
-	ListCell   *indexpr_item;
-	int			i;
 	HeapTuple	indexTuple, classTuple;
 	Datum		indclassDatum, colOptionDatum, optionDatum;
+	TupleDesc	indexTupDesc;
 	oidvector  *indclass;
 	int2vector *indcoloptions;
 	bool		isnull;
@@ -1175,83 +1181,12 @@ index_concurrent_create(Relation heapRelation, Oid indOid, char *concurrentName)
 		ReleaseSysCache(constraintTuple);
 	}
 
-	/* Get expressions associated to this index for compilation of column names */
-	indexprs = RelationGetIndexExpressions(indexRelation);
-	indexpr_item = list_head(indexprs);
-
-	/* Build the list of column names, necessary for index_create */
-	for (i = 0; i < indexInfo->ii_NumIndexAttrs; i++)
-	{
-		char	   *origname, *curname;
-		char		buf[NAMEDATALEN];
-		AttrNumber	attnum = indexInfo->ii_KeyAttrNumbers[i];
-		int			j;
-
-		/* Pick up column name depending on attribute type */
-		if (attnum > 0)
-		{
-			/*
-			 * This is a column attribute, so simply pick column name from
-			 * relation.
-			 */
-			Form_pg_attribute attform = heapRelation->rd_att->attrs[attnum - 1];;
-			origname = pstrdup(NameStr(attform->attname));
-		}
-		else if (attnum < 0)
-		{
-			/* Case of a system attribute */
-			Form_pg_attribute attform = SystemAttributeDefinition(attnum,
-										  heapRelation->rd_rel->relhasoids);
-			origname = pstrdup(NameStr(attform->attname));
-		}
-		else
-		{
-			Node *indnode;
-			/*
-			 * This is the case of an expression, so pick up the expression
-			 * name.
-			 */
-			Assert(indexpr_item != NULL);
-			indnode = (Node *) lfirst(indexpr_item);
-			indexpr_item = lnext(indexpr_item);
-			origname = deparse_expression(indnode,
-							deparse_context_for(RelationGetRelationName(heapRelation),
-												RelationGetRelid(heapRelation)),
-							false, false);
-		}
-
-		/*
-		 * Check if the name picked has any conflict with existing names and
-		 * change it.
-		 */
-		curname = origname;
-		for (j = 1;; j++)
-		{
-			ListCell   *lc2;
-			char		nbuf[32];
-			int			nlen;
-
-			foreach(lc2, columnNames)
-			{
-				if (strcmp(curname, (char *) lfirst(lc2)) == 0)
-					break;
-			}
-			if (lc2 == NULL)
-				break; /* found nonconflicting name */
-
-			sprintf(nbuf, "%d", j);
-
-			/* Ensure generated names are shorter than NAMEDATALEN */
-			nlen = pg_mbcliplen(origname, strlen(origname),
-								NAMEDATALEN - 1 - strlen(nbuf));
-			memcpy(buf, origname, nlen);
-			strcpy(buf + nlen, nbuf);
-			curname = buf;
-		}
-
-		/* Append name to existing list */
-		columnNames = lappend(columnNames, pstrdup(curname));
-	}
+	/*
+	 * Create a copy of the tuple descriptor to be used for the concurrent
+	 * entry and reset any cache counters on it to have a fresh version.
+	 */
+	indexTupDesc = CreateTupleDescCopyConstr(RelationGetDescr(indexRelation));
+	ResetTupleDescCache(indexTupDesc);
 
 	/* Get the array of class and column options IDs from index info */
 	indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indOid));
@@ -1280,13 +1215,14 @@ index_concurrent_create(Relation heapRelation, Oid indOid, char *concurrentName)
 								 InvalidOid,
 								 InvalidOid,
 								 indexInfo,
-								 columnNames,
+								 NIL,
 								 indexRelation->rd_rel->relam,
 								 indexRelation->rd_rel->reltablespace,
 								 indexRelation->rd_indcollation,
 								 indclass->values,
 								 indcoloptions->values,
 								 optionDatum,
+								 indexTupDesc,
 								 indexRelation->rd_index->indisprimary,
 								 OidIsValid(constraintOid),	/* is constraint? */
 								 !indexRelation->rd_index->indimmediate,	/* is deferrable? */

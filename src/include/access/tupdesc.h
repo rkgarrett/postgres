@@ -95,6 +95,8 @@ extern void TupleDescCopyEntry(TupleDesc dst, AttrNumber dstAttno,
 
 extern void FreeTupleDesc(TupleDesc tupdesc);
 
+extern void ResetTupleDescCache(TupleDesc tupdesc);
+
 extern void IncrTupleDescRefCount(TupleDesc tupdesc);
 extern void DecrTupleDescRefCount(TupleDesc tupdesc);
 
