@@ -291,7 +291,7 @@ REINDEX { INDEX | TABLE | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable clas
        this process, meaning that if <command>REINDEX CONCURRENTLY</> is
        run on a table with multiple indexes, all the catalog entries of the
        temporary indexes are created within a single transaction. A
-       <entry>SHARE UPDATE EXCLUSIVE</entry> lock at session level is taken
+       <literal>SHARE UPDATE EXCLUSIVE</literal> lock at session level is taken
        on the indexes being reindexed as well as its parent table to prevent
        any schema modification while processing.
       </para>
@@ -337,6 +337,7 @@ REINDEX { INDEX | TABLE | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable clas
        <quote>false</> to prevent any new tuple insertions. This step
        is done within a single transaction for each temporary entry.
       </para>
+     </listitem>
      <listitem>
       <para>
        The temporary index definition and its data (which is now the
@@ -346,7 +347,7 @@ REINDEX { INDEX | TABLE | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable clas
      </listitem>
      <listitem>
       <para>
-       The <entry>SHARE UPDATE EXCLUSIVE</entry> session lock is released
+       The <literal>SHARE UPDATE EXCLUSIVE</literal> session lock is released
        for all the indexes processed as well as their parent tables.
       </para>
      </listitem>
