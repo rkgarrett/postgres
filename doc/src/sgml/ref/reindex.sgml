@@ -77,16 +77,6 @@ REINDEX { INDEX | TABLE | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable clas
      </para>
     </listitem>
 
-    <listitem>
-     <para>
-      Concurrent indexes based on a <literal>PRIMARY KEY</> or an exclude
-      constraint need to be dropped with
-      <literal>ALTER TABLE DROP CONSTRAINT</>. This is also the case of
-      <literal>UNIQUE</> indexes using constraints. Other indexes can be
-      dropped using <literal>DROP INDEX</> including invalid toast indexes.
-     </para>
-    </listitem>
-
    </itemizedlist></para>
  </refsect1>
 
@@ -284,9 +274,12 @@ REINDEX { INDEX | TABLE | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable clas
 
    <para>
     The following steps occur in a concurrent index build, each in a separate
-    transaction. Note that if there are multiple indexes to be rebuilt then each
-    step loops through all the indexes we're rebuilding, using a separate
-    transaction for each one.
+    transaction except when the new index definitions are created, where all
+    the concurrent entries are created using only one transaction. Note that
+    if there are multiple indexes to be rebuilt then each step loops through
+    all the indexes we're rebuilding, using a separate transaction for each one.
+    <command>REINDEX CONCURRENTLY</> proceeds as follows when rebuilding
+    indexes:
 
     <orderedlist>
      <listitem>
@@ -383,7 +376,11 @@ Indexes:
     The recommended recovery method in such cases is to drop the concurrent
     index and try again to perform <command>REINDEX CONCURRENTLY</>.
     The concurrent index created during the processing has a name finishing by
-    the suffix cct. This works as well with indexes of toast relations.
+    the suffix cct. If a concurrent index is based on a <literal>PRIMARY KEY</>
+    or an exclude constraint is marked as invalid. It can be dropped with
+    <literal>ALTER TABLE DROP CONSTRAINT</>. This is also the case of
+    <literal>UNIQUE</> indexes using constraints. Other indexes can be
+    dropped using <literal>DROP INDEX</> including invalid toast indexes.
    </para>
 
    <para>
