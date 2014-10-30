@@ -882,9 +882,9 @@ DefineIndex(Oid relationId,
  * ReindexRelationConcurrently
  *
  * Process REINDEX CONCURRENTLY for given relation Oid. The relation can be
- * either an index or a table. If a table is specified, each step of REINDEX
- * CONCURRENTLY is done in parallel with all the table's indexes as well as
- * its dependent toast indexes.
+ * either an index or a table. If a table is specified, each phase is processed
+ * one by done for each table's indexes as well as its dependent toast indexes
+ * if this table has a toast relation defined.
  */
 bool
 ReindexRelationConcurrently(Oid relationOid)
@@ -903,9 +903,11 @@ ReindexRelationConcurrently(Oid relationOid)
 	 * If the relkind of given relation Oid is a table, all its valid indexes
 	 * will be rebuilt, including its associated toast table indexes. If
 	 * relkind is an index, this index itself will be rebuilt. The locks taken
-	 * parent relations and involved indexes are kept until this transaction
+	 * on parent relations and involved indexes are kept until this transaction
 	 * is committed to protect against schema changes that might occur until
-	 * the session lock is taken on each relation.
+	 * the session lock is taken on each relation, session lock used to
+	 * similarly protect from any schema change that could happen within the
+	 * multiple transactions that are used during this process.
 	 */
 	switch (get_rel_relkind(relationOid))
 	{
@@ -1030,12 +1032,12 @@ ReindexRelationConcurrently(Oid relationOid)
 	/*
 	 * Phase 1 of REINDEX CONCURRENTLY
 	 *
-	 * Here begins the process for rebuilding concurrently the index entries.
+	 * Here begins the process for concurrently rebuilding the index entries.
 	 * We need first to create an index which is based on the same data
 	 * as the former index except that it will be only registered in catalogs
-	 * and will be built after. It is possible to perform all the operations
+	 * and will be built later. It is possible to perform all the operations
 	 * on all the indexes at the same time for a parent relation including
-	 * its indexes for toast relation.
+	 * indexes for its toast relation.
 	 */
 
 	/* Do the concurrent index creation for each index */
@@ -1201,13 +1203,13 @@ ReindexRelationConcurrently(Oid relationOid)
 	/*
 	 * Phase 3 of REINDEX CONCURRENTLY
 	 *
-	 * During this phase the concurrent indexes catch up with the INSERT that
-	 * might have occurred in the parent table.
+	 * During this phase the concurrent indexes catch up with any new tuples
+	 * that were created during the previous phase.
 	 *
 	 * We once again wait until no transaction can have the table open with
-	 * the index marked as read-only for updates. Each index validation is done
-	 * with a separate transaction to avoid opening transaction for an
-	 * unnecessary too long time.
+	 * the index marked as read-only for updates. Each index validation is
+	 * done in a separate transaction to minimize how long we hold an open
+	 * transaction.
 	 */
 
 	/* Perform a wait on all the session locks */
@@ -1280,9 +1282,10 @@ ReindexRelationConcurrently(Oid relationOid)
 	 * to swap each concurrent index with its corresponding old index. Note
 	 * that the concurrent index used for swaping is not marked as valid
 	 * because we need to keep the former index and the concurrent index with
-	 * a different valid status to avoid an implosion in the number of indexes
+	 * a different valid status to avoid an explosion in the number of indexes
 	 * a parent relation could have if this operation step fails multiple times
-	 * in a row due to a reason or another.
+	 * in a row due to a reason or another. Note that once this phase is done
+	 * each concurrent index will be thrown away in the next process steps.
 	 */
 	forboth(lc, indexIds, lc2, concurrentIndexIds)
 	{
