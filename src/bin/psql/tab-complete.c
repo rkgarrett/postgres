@@ -2261,7 +2261,9 @@ psql_completion(const char *text, int start, int end)
 			 pg_strcasecmp(prev_wd, "ON") == 0)
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tm, NULL);
 	/* If we have CREATE|UNIQUE INDEX <sth> CONCURRENTLY, then add "ON" */
-	else if ((pg_strcasecmp(prev3_wd, "INDEX") == 0 ||
+	else if ((pg_strcasecmp(prev4_wd, "CREATE") == 0 ||
+			  pg_strcasecmp(prev3_wd, "CREATE") == 0) &&
+			 (pg_strcasecmp(prev3_wd, "INDEX") == 0 ||
 			  pg_strcasecmp(prev2_wd, "INDEX") == 0) &&
 			 pg_strcasecmp(prev_wd, "CONCURRENTLY") == 0)
 		COMPLETE_WITH_CONST("ON");
