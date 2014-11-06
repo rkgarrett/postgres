@@ -1291,6 +1291,8 @@ ReindexRelationConcurrently(Oid relationOid)
 	{
 		Oid			indOid = lfirst_oid(lc);
 		Oid			concurrentOid = lfirst_oid(lc2);
+		LOCKTAG	   *heapLockTag = NULL;
+		ListCell   *cell;
 		Oid			relOid;
 
 		/* Check for any process interruption */
@@ -1301,9 +1303,22 @@ ReindexRelationConcurrently(Oid relationOid)
 		 * a new one.
 		 */
 		StartTransactionCommand();
+		relOid = IndexGetRelation(indOid, false);
+
+		/*
+		 * Find the locktag of parent table for this index, we need to wait for
+		 * locks on it before the swap.
+		 */
+		foreach(cell, lockTags)
+		{
+			LOCKTAG *localTag = (LOCKTAG *) lfirst(cell);
+			if (relOid == localTag->locktag_field2)
+				heapLockTag = localTag;
+		}
+		Assert(heapLockTag && heapLockTag->locktag_field2 != InvalidOid);
 
 		/* Swap old index and its concurrent entry */
-		index_concurrent_swap(concurrentOid, indOid);
+		index_concurrent_swap(concurrentOid, indOid, *heapLockTag);
 
 		/*
 		 * Invalidate the relcache for the table, so that after this commit

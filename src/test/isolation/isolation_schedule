@@ -21,6 +21,7 @@ test: delete-abort-savept-2
 test: aborted-keyrevoke
 test: multixact-no-deadlock
 test: multixact-no-forget
+test: reindex-concurrently
 test: propagate-lock-delete
 test: nowait
 test: nowait-2

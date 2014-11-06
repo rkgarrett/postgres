@@ -1289,12 +1289,21 @@ index_concurrent_build(Oid heapOid,
  * is taken on those two relations during the swap of their relfilenode.
  */
 void
-index_concurrent_swap(Oid newIndexOid, Oid oldIndexOid)
+index_concurrent_swap(Oid newIndexOid, Oid oldIndexOid, LOCKTAG locktag)
 {
 	Relation		oldIndexRel, newIndexRel, pg_class;
 	HeapTuple		oldIndexTuple, newIndexTuple;
 	Form_pg_class	oldIndexForm, newIndexForm;
 	Oid				tmpnode;
+
+	/*
+	 * Before doing any operation, we need to wait until no running
+	 * transaction could be using any index for a query as a deadlock
+	 * could occur if another transaction running tries to take the same
+	 * level of locking as this operation. Hence use AccessExclusiveLock
+	 * to ensure that there is nothing nasty waiting.
+	 */
+	WaitForLockers(locktag, AccessExclusiveLock);
 
 	/*
 	 * Take a necessary lock on the old and new index before swapping them.
