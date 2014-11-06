@@ -144,7 +144,7 @@ static bool completion_case_sensitive;	/* completion is case sensitive */
  * 5) The list of attributes of the given table (possibly schema-qualified).
  * 6/ The list of arguments to the given function (possibly schema-qualified).
  */
-#define COMPLETE_WITH_QUERY(query) \
+#define COMPLETE_WITH_QUERY(query)				\
 do { \
 	completion_charp = query; \
 	matches = completion_matches(text, complete_from_query); \
@@ -3334,14 +3334,35 @@ psql_completion(const char *text, int start, int end)
 
 		COMPLETE_WITH_LIST(list_REINDEX);
 	}
-	else if (pg_strcasecmp(prev2_wd, "REINDEX") == 0)
+	else if (pg_strcasecmp(prev2_wd, "REINDEX") == 0 ||
+			 pg_strcasecmp(prev3_wd, "REINDEX") == 0)
 	{
+		/* Complete REINDEX TABLE with a list of tables, and CONCURRENTLY  */
 		if (pg_strcasecmp(prev_wd, "TABLE") == 0)
+			COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tm,
+				" UNION SELECT 'CONCURRENTLY'");
+		/* Complete REINDEX TABLE CONCURRENTLY with a list of tables */
+		else if (pg_strcasecmp(prev2_wd, "TABLE") == 0 &&
+				 pg_strcasecmp(prev_wd, "CONCURRENTLY") == 0)
 			COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tm, NULL);
+		/* Complete REINDEX TABLE with a list of indexes, and CONCURRENTLY */
 		else if (pg_strcasecmp(prev_wd, "INDEX") == 0)
+			COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_indexes,
+									   " UNION SELECT 'CONCURRENTLY'");
+		/* Complete REINDEX INDEX CONCCURRENTLY with a list if indexes */
+		else if (pg_strcasecmp(prev2_wd, "INDEX") == 0 &&
+				 pg_strcasecmp(prev_wd, "CONCURRENTLY") == 0)
 			COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_indexes, NULL);
-		else if (pg_strcasecmp(prev_wd, "SYSTEM") == 0 ||
-				 pg_strcasecmp(prev_wd, "DATABASE") == 0)
+		/* Complete REINDEX DATABASE with a list of databases, and CONCURRENTLY */
+		else if (pg_strcasecmp(prev_wd, "DATABASE") == 0)
+			COMPLETE_WITH_QUERY(Query_for_list_of_databases
+								" UNION SELECT 'CONCURRENTLY'");
+		/* Complete REINDEX DATABASE CONCURRENTLY with a list of databases */
+		else if (pg_strcasecmp(prev2_wd, "DATABASE") == 0 ||
+				 pg_strcasecmp(prev_wd, "CONCURRENTLY") == 0)
+			COMPLETE_WITH_QUERY(Query_for_list_of_databases);
+		/* Complete REINDEX SYSTEM with a list of databases */
+		else if (pg_strcasecmp(prev_wd, "SYSTEM") == 0)
 			COMPLETE_WITH_QUERY(Query_for_list_of_databases);
 	}
 
