@@ -1231,7 +1231,7 @@ index_concurrent_create(Relation heapRelation, Oid indOid, char *concurrentName)
 								 true,	/* skip build? */
 								 true,	/* concurrent? */
 								 false,	/* is_internal? */
-								 false, /* is_not_exists? */
+								 false, /* if_not_exists? */
 								 true); /* reindex? */
 
 	/* Close the relations used and clean up */
