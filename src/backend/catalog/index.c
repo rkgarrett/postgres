@@ -1230,7 +1230,8 @@ index_concurrent_create(Relation heapRelation, Oid indOid, char *concurrentName)
 								 true,	/* allow table to be a system catalog? */
 								 true,	/* skip build? */
 								 true,	/* concurrent? */
-								 false,	/* is_internal */
+								 false,	/* is_internal? */
+								 false, /* is_not_exists? */
 								 true); /* reindex? */
 
 	/* Close the relations used and clean up */
