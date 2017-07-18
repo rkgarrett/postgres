@@ -165,7 +165,6 @@ LogicalDecodingProcessRecord(LogicalDecodingContext *ctx, XLogReaderState *recor
 static void
 DecodeXLogOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 {
-	SnapBuild  *builder = ctx->snapshot_builder;
 	uint8		info = XLogRecGetInfo(buf->record) & ~XLR_INFO_MASK;
 
 	ReorderBufferProcessXid(ctx->reorder, XLogRecGetXid(buf->record),
@@ -176,8 +175,6 @@ DecodeXLogOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 			/* this is also used in END_OF_RECOVERY checkpoints */
 		case XLOG_CHECKPOINT_SHUTDOWN:
 		case XLOG_END_OF_RECOVERY:
-			SnapBuildSerializationPoint(builder, buf->origptr);
-
 			break;
 		case XLOG_CHECKPOINT_ONLINE:
 
@@ -217,8 +214,11 @@ DecodeXactOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 	 * ok not to call ReorderBufferProcessXid() in that case, except in the
 	 * assignment case there'll not be any later records with the same xid;
 	 * and in the assignment case we'll not decode those xacts.
+	 *
+	 * FIXME: the assignment record is no more. I don't understand the above
+	 * comment. Can it be just removed?
 	 */
-	if (SnapBuildCurrentState(builder) < SNAPBUILD_FULL_SNAPSHOT)
+	if (SnapBuildCurrentState(builder) < SNAPBUILD_CONSISTENT)
 		return;
 
 	switch (info)
@@ -257,23 +257,6 @@ DecodeXactOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 					xid = parsed.twophase_xid;
 
 				DecodeAbort(ctx, buf, &parsed, xid);
-				break;
-			}
-		case XLOG_XACT_ASSIGNMENT:
-			{
-				xl_xact_assignment *xlrec;
-				int			i;
-				TransactionId *sub_xid;
-
-				xlrec = (xl_xact_assignment *) XLogRecGetData(r);
-
-				sub_xid = &xlrec->xsub[0];
-
-				for (i = 0; i < xlrec->nsubxacts; i++)
-				{
-					ReorderBufferAssignChild(reorder, xlrec->xtop,
-											 *(sub_xid++), buf->origptr);
-				}
 				break;
 			}
 		case XLOG_XACT_PREPARE:
@@ -354,7 +337,7 @@ DecodeHeap2Op(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 	ReorderBufferProcessXid(ctx->reorder, xid, buf->origptr);
 
 	/* no point in doing anything yet */
-	if (SnapBuildCurrentState(builder) < SNAPBUILD_FULL_SNAPSHOT)
+	if (SnapBuildCurrentState(builder) < SNAPBUILD_CONSISTENT)
 		return;
 
 	switch (info)
@@ -409,7 +392,7 @@ DecodeHeapOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 	ReorderBufferProcessXid(ctx->reorder, xid, buf->origptr);
 
 	/* no point in doing anything yet */
-	if (SnapBuildCurrentState(builder) < SNAPBUILD_FULL_SNAPSHOT)
+	if (SnapBuildCurrentState(builder) < SNAPBUILD_CONSISTENT)
 		return;
 
 	switch (info)
@@ -502,7 +485,7 @@ DecodeLogicalMsgOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 	ReorderBufferProcessXid(ctx->reorder, XLogRecGetXid(r), buf->origptr);
 
 	/* No point in doing anything yet. */
-	if (SnapBuildCurrentState(builder) < SNAPBUILD_FULL_SNAPSHOT)
+	if (SnapBuildCurrentState(builder) < SNAPBUILD_CONSISTENT)
 		return;
 
 	message = (xl_logical_message *) XLogRecGetData(r);

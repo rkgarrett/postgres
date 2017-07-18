@@ -414,6 +414,13 @@ typedef uint32 CommandId;
 #define InvalidCommandId	(~(CommandId)0)
 
 /*
+ * CommitSeqNo is currently an LSN, but keep use a separate datatype for clarity.
+ */
+typedef uint64 CommitSeqNo;
+
+#define InvalidCommitSeqNo		((CommitSeqNo) 0)
+
+/*
  * Array indexing support
  */
 #define MAXDIM 6

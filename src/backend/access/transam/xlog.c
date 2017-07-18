@@ -24,7 +24,9 @@
 
 #include "access/clog.h"
 #include "access/commit_ts.h"
+#include "access/csnlog.h"
 #include "access/multixact.h"
+#include "access/mvccvars.h"
 #include "access/rewriteheap.h"
 #include "access/subtrans.h"
 #include "access/timeline.h"
@@ -1098,8 +1100,6 @@ XLogInsertRecord(XLogRecData *rdata,
 	 * Done! Let others know that we're finished.
 	 */
 	WALInsertLockRelease();
-
-	MarkCurrentTransactionIdLoggedIfAny();
 
 	END_CRIT_SECTION();
 
@@ -4955,6 +4955,7 @@ BootStrapXLOG(void)
 	char		mock_auth_nonce[MOCK_AUTH_NONCE_LEN];
 	struct timeval tv;
 	pg_crc32c	crc;
+	TransactionId latestCompletedXid;
 
 	/*
 	 * Select a hopefully-unique system identifier code for this installation.
@@ -5020,6 +5021,13 @@ BootStrapXLOG(void)
 	ShmemVariableCache->nextXid = checkPoint.nextXid;
 	ShmemVariableCache->nextOid = checkPoint.nextOid;
 	ShmemVariableCache->oidCount = 0;
+
+	pg_atomic_write_u64(&ShmemVariableCache->nextCommitSeqNo, COMMITSEQNO_FIRST_NORMAL);
+	latestCompletedXid = checkPoint.nextXid;
+	TransactionIdRetreat(latestCompletedXid);
+	pg_atomic_write_u32(&ShmemVariableCache->latestCompletedXid, latestCompletedXid);
+	pg_atomic_write_u32(&ShmemVariableCache->oldestActiveXid, checkPoint.nextXid);
+
 	MultiXactSetNextMXact(checkPoint.nextMulti, checkPoint.nextMultiOffset);
 	AdvanceOldestClogXid(checkPoint.oldestXid);
 	SetTransactionIdLimit(checkPoint.oldestXid, checkPoint.oldestXidDB);
@@ -5118,8 +5126,8 @@ BootStrapXLOG(void)
 
 	/* Bootstrap the commit log, too */
 	BootStrapCLOG();
+	BootStrapCSNLOG();
 	BootStrapCommitTs();
-	BootStrapSUBTRANS();
 	BootStrapMultiXact();
 
 	pfree(buffer);
@@ -6207,6 +6215,7 @@ StartupXLOG(void)
 	XLogPageReadPrivate private;
 	bool		fast_promoted = false;
 	struct stat st;
+	TransactionId latestCompletedXid;
 
 	/*
 	 * Read control file and check XLOG status looks valid.
@@ -6636,6 +6645,12 @@ StartupXLOG(void)
 	XLogCtl->ckptXidEpoch = checkPoint.nextXidEpoch;
 	XLogCtl->ckptXid = checkPoint.nextXid;
 
+	pg_atomic_write_u64(&ShmemVariableCache->nextCommitSeqNo, COMMITSEQNO_FIRST_NORMAL);
+	latestCompletedXid = checkPoint.nextXid;
+	TransactionIdRetreat(latestCompletedXid);
+	pg_atomic_write_u32(&ShmemVariableCache->latestCompletedXid, latestCompletedXid);
+	pg_atomic_write_u32(&ShmemVariableCache->oldestActiveXid, checkPoint.nextXid);
+
 	/*
 	 * Initialize replication slots, before there's a chance to remove
 	 * required resources.
@@ -6888,15 +6903,15 @@ StartupXLOG(void)
 			Assert(TransactionIdIsValid(oldestActiveXID));
 
 			/* Tell procarray about the range of xids it has to deal with */
-			ProcArrayInitRecovery(ShmemVariableCache->nextXid);
+			ProcArrayInitRecovery(oldestActiveXID, ShmemVariableCache->nextXid);
 
 			/*
-			 * Startup commit log and subtrans only.  MultiXact and commit
+			 * Startup commit log and csnlog only.  MultiXact and commit
 			 * timestamp have already been started up and other SLRUs are not
 			 * maintained during recovery and need not be started yet.
 			 */
 			StartupCLOG();
-			StartupSUBTRANS(oldestActiveXID);
+			StartupCSNLOG(oldestActiveXID);
 
 			/*
 			 * If we're beginning at a shutdown checkpoint, we know that
@@ -6907,7 +6922,6 @@ StartupXLOG(void)
 			if (wasShutdown)
 			{
 				RunningTransactionsData running;
-				TransactionId latestCompletedXid;
 
 				/*
 				 * Construct a RunningTransactions snapshot representing a
@@ -6915,16 +6929,8 @@ StartupXLOG(void)
 				 * alive. We're never overflowed at this point because all
 				 * subxids are listed with their parent prepared transactions.
 				 */
-				running.xcnt = nxids;
-				running.subxcnt = 0;
-				running.subxid_overflow = false;
 				running.nextXid = checkPoint.nextXid;
 				running.oldestRunningXid = oldestActiveXID;
-				latestCompletedXid = checkPoint.nextXid;
-				TransactionIdRetreat(latestCompletedXid);
-				Assert(TransactionIdIsNormal(latestCompletedXid));
-				running.latestCompletedXid = latestCompletedXid;
-				running.xids = xids;
 
 				ProcArrayApplyRecoveryInfo(&running);
 
@@ -7668,20 +7674,22 @@ StartupXLOG(void)
 	XLogCtl->lastSegSwitchTime = (pg_time_t) time(NULL);
 	XLogCtl->lastSegSwitchLSN = EndOfLog;
 
-	/* also initialize latestCompletedXid, to nextXid - 1 */
-	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-	ShmemVariableCache->latestCompletedXid = ShmemVariableCache->nextXid;
-	TransactionIdRetreat(ShmemVariableCache->latestCompletedXid);
-	LWLockRelease(ProcArrayLock);
+	/* also initialize latestCompletedXid, to nextXid - 1, and oldestActiveXid */
+	latestCompletedXid = ShmemVariableCache->nextXid;
+	TransactionIdRetreat(latestCompletedXid);
+	pg_atomic_write_u32(&ShmemVariableCache->latestCompletedXid,
+						latestCompletedXid);
+	pg_atomic_write_u32(&ShmemVariableCache->oldestActiveXid,
+						oldestActiveXID);
 
 	/*
-	 * Start up the commit log and subtrans, if not already done for hot
+	 * Start up the commit log and csnlog, if not already done for hot
 	 * standby.  (commit timestamps are started below, if necessary.)
 	 */
 	if (standbyState == STANDBY_DISABLED)
 	{
 		StartupCLOG();
-		StartupSUBTRANS(oldestActiveXID);
+		StartupCSNLOG(oldestActiveXID);
 	}
 
 	/*
@@ -8350,8 +8358,8 @@ ShutdownXLOG(int code, Datum arg)
 		CreateCheckPoint(CHECKPOINT_IS_SHUTDOWN | CHECKPOINT_IMMEDIATE);
 	}
 	ShutdownCLOG();
+	ShutdownCSNLOG();
 	ShutdownCommitTs();
-	ShutdownSUBTRANS();
 	ShutdownMultiXact();
 }
 
@@ -8921,14 +8929,14 @@ CreateCheckPoint(int flags)
 		PreallocXlogFiles(recptr);
 
 	/*
-	 * Truncate pg_subtrans if possible.  We can throw away all data before
+	 * Truncate pg_csnlog if possible.  We can throw away all data before
 	 * the oldest XMIN of any running transaction.  No future transaction will
-	 * attempt to reference any pg_subtrans entry older than that (see Asserts
-	 * in subtrans.c).  During recovery, though, we mustn't do this because
-	 * StartupSUBTRANS hasn't been called yet.
+	 * attempt to reference any pg_csnlog entry older than that (see Asserts
+	 * in csnlog.c).  During recovery, though, we mustn't do this because
+	 * StartupCSNLOG hasn't been called yet.
 	 */
 	if (!RecoveryInProgress())
-		TruncateSUBTRANS(GetOldestXmin(NULL, PROCARRAY_FLAGS_DEFAULT));
+		TruncateCSNLOG(GetOldestXmin(NULL, PROCARRAY_FLAGS_DEFAULT));
 
 	/* Real work is done, but log and update stats before releasing lock. */
 	LogCheckpointEnd(false);
@@ -9004,13 +9012,12 @@ static void
 CheckPointGuts(XLogRecPtr checkPointRedo, int flags)
 {
 	CheckPointCLOG();
+	CheckPointCSNLOG();
 	CheckPointCommitTs();
-	CheckPointSUBTRANS();
 	CheckPointMultiXact();
 	CheckPointPredicate();
 	CheckPointRelationMap();
 	CheckPointReplicationSlots();
-	CheckPointSnapBuild();
 	CheckPointLogicalRewriteHeap();
 	CheckPointBuffers(flags);	/* performs all required fsyncs */
 	CheckPointReplicationOrigin();
@@ -9284,14 +9291,14 @@ CreateRestartPoint(int flags)
 	}
 
 	/*
-	 * Truncate pg_subtrans if possible.  We can throw away all data before
+	 * Truncate pg_csnlog if possible.  We can throw away all data before
 	 * the oldest XMIN of any running transaction.  No future transaction will
-	 * attempt to reference any pg_subtrans entry older than that (see Asserts
-	 * in subtrans.c).  When hot standby is disabled, though, we mustn't do
-	 * this because StartupSUBTRANS hasn't been called yet.
+	 * attempt to reference any pg_csnlog entry older than that (see Asserts
+	 * in csnlog.c).  When hot standby is disabled, though, we mustn't do
+	 * this because StartupCSNLOG hasn't been called yet.
 	 */
 	if (EnableHotStandby)
-		TruncateSUBTRANS(GetOldestXmin(NULL, PROCARRAY_FLAGS_DEFAULT));
+		TruncateCSNLOG(GetOldestXmin(NULL, PROCARRAY_FLAGS_DEFAULT));
 
 	/* Real work is done, but log and update before releasing lock. */
 	LogCheckpointEnd(true);
@@ -9678,7 +9685,6 @@ xlog_redo(XLogReaderState *record)
 			TransactionId *xids;
 			int			nxids;
 			TransactionId oldestActiveXID;
-			TransactionId latestCompletedXid;
 			RunningTransactionsData running;
 
 			oldestActiveXID = PrescanPreparedTransactions(&xids, &nxids);
@@ -9689,16 +9695,8 @@ xlog_redo(XLogReaderState *record)
 			 * never overflowed at this point because all subxids are listed
 			 * with their parent prepared transactions.
 			 */
-			running.xcnt = nxids;
-			running.subxcnt = 0;
-			running.subxid_overflow = false;
 			running.nextXid = checkPoint.nextXid;
 			running.oldestRunningXid = oldestActiveXID;
-			latestCompletedXid = checkPoint.nextXid;
-			TransactionIdRetreat(latestCompletedXid);
-			Assert(TransactionIdIsNormal(latestCompletedXid));
-			running.latestCompletedXid = latestCompletedXid;
-			running.xids = xids;
 
 			ProcArrayApplyRecoveryInfo(&running);
 

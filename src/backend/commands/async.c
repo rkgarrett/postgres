@@ -1928,27 +1928,21 @@ asyncQueueProcessPageEntries(volatile QueuePosition *current,
 		/* Ignore messages destined for other databases */
 		if (qe->dboid == MyDatabaseId)
 		{
-			if (TransactionIdIsInProgress(qe->xid))
+			TransactionIdStatus xidstatus = TransactionIdGetStatus(qe->xid);
+
+			if (xidstatus == XID_INPROGRESS)
 			{
 				/*
 				 * The source transaction is still in progress, so we can't
 				 * process this message yet.  Break out of the loop, but first
 				 * back up *current so we will reprocess the message next
-				 * time.  (Note: it is unlikely but not impossible for
-				 * TransactionIdDidCommit to fail, so we can't really avoid
-				 * this advance-then-back-up behavior when dealing with an
-				 * uncommitted message.)
-				 *
-				 * Note that we must test TransactionIdIsInProgress before we
-				 * test TransactionIdDidCommit, else we might return a message
-				 * from a transaction that is not yet visible to snapshots;
-				 * compare the comments at the head of tqual.c.
+				 * time.
 				 */
 				*current = thisentry;
 				reachedStop = true;
 				break;
 			}
-			else if (TransactionIdDidCommit(qe->xid))
+			else if (xidstatus == XID_COMMITTED)
 			{
 				/* qe->data is the null-terminated channel name */
 				char	   *channel = qe->data;

@@ -23,6 +23,7 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/bufmgr.h"
+#include "storage/procarray.h"
 #include "utils/snapmgr.h"
 #include "utils/rel.h"
 #include "utils/tqual.h"
@@ -101,10 +102,10 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	 */
 	if (IsCatalogRelation(relation) ||
 		RelationIsAccessibleInLogicalDecoding(relation))
-		OldestXmin = RecentGlobalXmin;
+		OldestXmin = GetRecentGlobalXmin();
 	else
 		OldestXmin =
-			TransactionIdLimitedForOldSnapshots(RecentGlobalDataXmin,
+			TransactionIdLimitedForOldSnapshots(GetRecentGlobalDataXmin(),
 												relation);
 
 	Assert(TransactionIdIsValid(OldestXmin));

@@ -26,6 +26,7 @@
 
 #include "access/commit_ts.h"
 #include "access/htup_details.h"
+#include "access/mvccvars.h"
 #include "access/slru.h"
 #include "access/transam.h"
 #include "catalog/pg_type.h"

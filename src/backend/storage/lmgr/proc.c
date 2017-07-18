@@ -364,7 +364,7 @@ InitProcess(void)
 	MyProc->fpVXIDLock = false;
 	MyProc->fpLocalTransactionId = InvalidLocalTransactionId;
 	MyPgXact->xid = InvalidTransactionId;
-	MyPgXact->xmin = InvalidTransactionId;
+	MyPgXact->snapshotcsn = InvalidCommitSeqNo;
 	MyProc->pid = MyProcPid;
 	/* backendId, databaseId and roleId will be filled in later */
 	MyProc->backendId = InvalidBackendId;
@@ -539,7 +539,7 @@ InitAuxiliaryProcess(void)
 	MyProc->fpVXIDLock = false;
 	MyProc->fpLocalTransactionId = InvalidLocalTransactionId;
 	MyPgXact->xid = InvalidTransactionId;
-	MyPgXact->xmin = InvalidTransactionId;
+	MyPgXact->snapshotcsn = InvalidCommitSeqNo;
 	MyProc->backendId = InvalidBackendId;
 	MyProc->databaseId = InvalidOid;
 	MyProc->roleId = InvalidOid;
@@ -770,7 +770,7 @@ static void
 RemoveProcFromArray(int code, Datum arg)
 {
 	Assert(MyProc != NULL);
-	ProcArrayRemove(MyProc, InvalidTransactionId);
+	ProcArrayRemove(MyProc);
 }
 
 /*

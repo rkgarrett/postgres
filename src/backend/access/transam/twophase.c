@@ -22,7 +22,7 @@
  *		transaction in prepared state with the same GID.
  *
  *		A global transaction (gxact) also has dummy PGXACT and PGPROC; this is
- *		what keeps the XID considered running by TransactionIdIsInProgress.
+ *		what keeps the XID considered running by the functions in procarray.c.
  *		It is also convenient as a PGPROC to hook the gxact's locks to.
  *
  *		Information to recover prepared transactions in case of crash is
@@ -78,6 +78,7 @@
 
 #include "access/commit_ts.h"
 #include "access/htup_details.h"
+#include "access/mvccvars.h"
 #include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
@@ -467,6 +468,7 @@ MarkAsPreparingGuts(GlobalTransaction gxact, TransactionId xid, const char *gid,
 	proc->lxid = (LocalTransactionId) xid;
 	pgxact->xid = xid;
 	pgxact->xmin = InvalidTransactionId;
+	pgxact->snapshotcsn = InvalidCommitSeqNo;
 	pgxact->delayChkpt = false;
 	pgxact->vacuumFlags = 0;
 	proc->pid = 0;
@@ -480,9 +482,6 @@ MarkAsPreparingGuts(GlobalTransaction gxact, TransactionId xid, const char *gid,
 	proc->waitProcLock = NULL;
 	for (i = 0; i < NUM_LOCK_PARTITIONS; i++)
 		SHMQueueInit(&(proc->myProcLocks[i]));
-	/* subxid data must be filled later by GXactLoadSubxactData */
-	pgxact->overflowed = false;
-	pgxact->nxids = 0;
 
 	gxact->prepared_at = prepared_at;
 	gxact->xid = xid;
@@ -497,34 +496,6 @@ MarkAsPreparingGuts(GlobalTransaction gxact, TransactionId xid, const char *gid,
 	 * abort after this, we must release it.
 	 */
 	MyLockedGxact = gxact;
-}
-
-/*
- * GXactLoadSubxactData
- *
- * If the transaction being persisted had any subtransactions, this must
- * be called before MarkAsPrepared() to load information into the dummy
- * PGPROC.
- */
-static void
-GXactLoadSubxactData(GlobalTransaction gxact, int nsubxacts,
-					 TransactionId *children)
-{
-	PGPROC	   *proc = &ProcGlobal->allProcs[gxact->pgprocno];
-	PGXACT	   *pgxact = &ProcGlobal->allPgXact[gxact->pgprocno];
-
-	/* We need no extra lock since the GXACT isn't valid yet */
-	if (nsubxacts > PGPROC_MAX_CACHED_SUBXIDS)
-	{
-		pgxact->overflowed = true;
-		nsubxacts = PGPROC_MAX_CACHED_SUBXIDS;
-	}
-	if (nsubxacts > 0)
-	{
-		memcpy(proc->subxids.xids, children,
-			   nsubxacts * sizeof(TransactionId));
-		pgxact->nxids = nsubxacts;
-	}
 }
 
 /*
@@ -545,7 +516,7 @@ MarkAsPrepared(GlobalTransaction gxact, bool lock_held)
 		LWLockRelease(TwoPhaseStateLock);
 
 	/*
-	 * Put it into the global ProcArray so TransactionIdIsInProgress considers
+	 * Put it into the global ProcArray so GetOldestActiveTransactionId() considers
 	 * the XID as still running.
 	 */
 	ProcArrayAdd(&ProcGlobal->allProcs[gxact->pgprocno]);
@@ -1036,8 +1007,6 @@ StartPrepare(GlobalTransaction gxact)
 	if (hdr.nsubxacts > 0)
 	{
 		save_state_data(children, hdr.nsubxacts * sizeof(TransactionId));
-		/* While we have the child-xact data, stuff it in the gxact too */
-		GXactLoadSubxactData(gxact, hdr.nsubxacts, children);
 	}
 	if (hdr.ncommitrels > 0)
 	{
@@ -1123,7 +1092,7 @@ EndPrepare(GlobalTransaction gxact)
 	 * NB: a side effect of this is to make a dummy ProcArray entry for the
 	 * prepared XID.  This must happen before we clear the XID from MyPgXact,
 	 * else there is a window where the XID is not running according to
-	 * TransactionIdIsInProgress, and onlookers would be entitled to assume
+	 * GetOldestActiveTransactionId, and onlookers would be entitled to assume
 	 * the xact crashed.  Instead we have a window where the same XID appears
 	 * twice in ProcArray, which is OK.
 	 */
@@ -1373,7 +1342,6 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	char	   *buf;
 	char	   *bufptr;
 	TwoPhaseFileHeader *hdr;
-	TransactionId latestXid;
 	TransactionId *children;
 	RelFileNode *commitrels;
 	RelFileNode *abortrels;
@@ -1418,14 +1386,11 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	invalmsgs = (SharedInvalidationMessage *) bufptr;
 	bufptr += MAXALIGN(hdr->ninvalmsgs * sizeof(SharedInvalidationMessage));
 
-	/* compute latestXid among all children */
-	latestXid = TransactionIdLatest(xid, hdr->nsubxacts, children);
-
 	/*
 	 * The order of operations here is critical: make the XLOG entry for
 	 * commit or abort, then mark the transaction committed or aborted in
 	 * pg_xact, then remove its PGPROC from the global ProcArray (which means
-	 * TransactionIdIsInProgress will stop saying the prepared xact is in
+	 * GetOldestActiveTransactionId() will stop saying the prepared xact is in
 	 * progress), then run the post-commit or post-abort callbacks. The
 	 * callbacks will release the locks the transaction held.
 	 */
@@ -1440,7 +1405,7 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 									   hdr->nsubxacts, children,
 									   hdr->nabortrels, abortrels);
 
-	ProcArrayRemove(proc, latestXid);
+	ProcArrayRemove(proc);
 
 	/*
 	 * In case we fail while running the callbacks, mark the gxact invalid so
@@ -2225,7 +2190,7 @@ RecordTransactionCommitPrepared(TransactionId xid,
 	/* Flush XLOG to disk */
 	XLogFlush(recptr);
 
-	/* Mark the transaction committed in pg_xact */
+	/* Mark the transaction committed in pg_xact and pg_csnlog */
 	TransactionIdCommitTree(xid, nchildren, children);
 
 	/* Checkpoint can proceed now */
@@ -2263,7 +2228,7 @@ RecordTransactionAbortPrepared(TransactionId xid,
 	 * Catch the scenario where we aborted partway through
 	 * RecordTransactionCommitPrepared ...
 	 */
-	if (TransactionIdDidCommit(xid))
+	if (TransactionIdGetStatus(xid) == XID_COMMITTED)
 		elog(PANIC, "cannot abort transaction %u, it was already committed",
 			 xid);
 

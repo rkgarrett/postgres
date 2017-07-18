@@ -588,8 +588,13 @@ XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
 
 		LockRelease(&tag, ShareLock, false);
 
-		if (!TransactionIdIsInProgress(xid))
+		/*
+		 * Ok, this xid is not running anymore. But it might be a
+		 * subtransaction whose parent is still running.
+		 */
+		if (TransactionIdDidCommit(xid) || TransactionIdDidAbort(xid))
 			break;
+
 		xid = SubTransGetParent(xid);
 	}
 
@@ -620,8 +625,9 @@ ConditionalXactLockTableWait(TransactionId xid)
 
 		LockRelease(&tag, ShareLock, false);
 
-		if (!TransactionIdIsInProgress(xid))
+		if (TransactionIdDidCommit(xid) || TransactionIdDidAbort(xid))
 			break;
+
 		xid = SubTransGetParent(xid);
 	}
 

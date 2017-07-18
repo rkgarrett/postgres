@@ -52,11 +52,6 @@ extern bool InRecovery;
  * we haven't yet processed a RUNNING_XACTS or shutdown-checkpoint WAL record
  * to initialize our master-transaction tracking system.
  *
- * When the transaction tracking is initialized, we enter the SNAPSHOT_PENDING
- * state. The tracked information might still be incomplete, so we can't allow
- * connections yet, but redo functions must update the in-memory state when
- * appropriate.
- *
  * In SNAPSHOT_READY mode, we have full knowledge of transactions that are
  * (or were) running in the master at the current WAL location. Snapshots
  * can be taken, and read-only queries can be run.
@@ -65,13 +60,12 @@ typedef enum
 {
 	STANDBY_DISABLED,
 	STANDBY_INITIALIZED,
-	STANDBY_SNAPSHOT_PENDING,
 	STANDBY_SNAPSHOT_READY
 } HotStandbyState;
 
 extern HotStandbyState standbyState;
 
-#define InHotStandby (standbyState >= STANDBY_SNAPSHOT_PENDING)
+#define InHotStandby (standbyState >= STANDBY_SNAPSHOT_READY)
 
 /*
  * Recovery target type.

@@ -33,6 +33,7 @@
 #include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/lmgr.h"
+#include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
@@ -841,7 +842,8 @@ static void
 refresh_by_heap_swap(Oid matviewOid, Oid OIDNewHeap, char relpersistence)
 {
 	finish_heap_swap(matviewOid, OIDNewHeap, false, false, true, true,
-					 RecentXmin, ReadNextMultiXactId(), relpersistence);
+					 GetOldestActiveTransactionId(), ReadNextMultiXactId(),
+					 relpersistence);
 }
 
 

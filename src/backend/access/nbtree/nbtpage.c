@@ -31,6 +31,7 @@
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "storage/procarray.h"
 #include "utils/snapmgr.h"
 
 static bool _bt_mark_page_halfdead(Relation rel, Buffer buf, BTStack stack);
@@ -760,7 +761,7 @@ _bt_page_recyclable(Page page)
 	 */
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	if (P_ISDELETED(opaque) &&
-		TransactionIdPrecedes(opaque->btpo.xact, RecentGlobalXmin))
+		TransactionIdPrecedes(opaque->btpo.xact, GetRecentGlobalXmin()))
 		return true;
 	return false;
 }

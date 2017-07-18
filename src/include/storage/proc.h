@@ -22,24 +22,6 @@
 #include "storage/proclist_types.h"
 
 /*
- * Each backend advertises up to PGPROC_MAX_CACHED_SUBXIDS TransactionIds
- * for non-aborted subtransactions of its current top transaction.  These
- * have to be treated as running XIDs by other backends.
- *
- * We also keep track of whether the cache overflowed (ie, the transaction has
- * generated at least one subtransaction that didn't fit in the cache).
- * If none of the caches have overflowed, we can assume that an XID that's not
- * listed anywhere in the PGPROC array is not a running transaction.  Else we
- * have to look at pg_subtrans.
- */
-#define PGPROC_MAX_CACHED_SUBXIDS 64	/* XXX guessed-at value */
-
-struct XidCache
-{
-	TransactionId xids[PGPROC_MAX_CACHED_SUBXIDS];
-};
-
-/*
  * Flags for PGXACT->vacuumFlags
  *
  * Note: If you modify these flags, you need to modify PROCARRAY_XXX flags
@@ -155,8 +137,6 @@ struct PGPROC
 	 */
 	SHM_QUEUE	myProcLocks[NUM_LOCK_PARTITIONS];
 
-	struct XidCache subxids;	/* cache for subtransaction XIDs */
-
 	/* Support for group XID clearing. */
 	/* true, if member of ProcArray group waiting for XID clear */
 	bool		procArrayGroupMember;
@@ -203,6 +183,9 @@ extern PGDLLIMPORT struct PGXACT *MyPgXact;
  * considerably on systems with many CPU cores, by reducing the number of
  * cache lines needing to be fetched.  Thus, think very carefully before adding
  * anything else here.
+ *
+ * XXX: GetSnapshotData no longer does that, so perhaps we should put these
+ * back to PGPROC for simplicity's sake.
  */
 typedef struct PGXACT
 {
@@ -212,15 +195,17 @@ typedef struct PGXACT
 
 	TransactionId xmin;			/* minimal running XID as it was when we were
 								 * starting our xact, excluding LAZY VACUUM:
-								 * vacuum must not remove tuples deleted by
 								 * xid >= xmin ! */
 
+	CommitSeqNo	snapshotcsn;	/* oldest snapshot in use in this backend:
+								 * vacuum must not remove tuples deleted by
+								 * xacts with commit seqno > snapshotcsn !
+								 * XXX: currently unused, vacuum uses just xmin, still.
+								 */
+
 	uint8		vacuumFlags;	/* vacuum-related flags, see above */
-	bool		overflowed;
 	bool		delayChkpt;		/* true if this proc delays checkpoint start;
 								 * previously called InCommit */
-
-	uint8		nxids;
 } PGXACT;
 
 /*

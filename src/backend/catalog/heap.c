@@ -69,6 +69,7 @@
 #include "parser/parse_relation.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -893,7 +894,7 @@ AddNewRelationTuple(Relation pg_class_desc,
 		 * We know that no xacts older than RecentXmin are still running, so
 		 * that will do.
 		 */
-		new_rel_reltup->relfrozenxid = RecentXmin;
+		new_rel_reltup->relfrozenxid = GetOldestActiveTransactionId();
 
 		/*
 		 * Similarly, initialize the minimum Multixact to the first value that

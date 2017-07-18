@@ -5034,8 +5034,6 @@ DATA(insert OID = 2945 (  txid_snapshot_xmin		PGNSP PGUID 12 1  0 0 0 f f f f t 
 DESCR("get xmin of snapshot");
 DATA(insert OID = 2946 (  txid_snapshot_xmax		PGNSP PGUID 12 1  0 0 0 f f f f t f i s 1 0 20 "2970" _null_ _null_ _null_ _null_ _null_ txid_snapshot_xmax _null_ _null_ _null_ ));
 DESCR("get xmax of snapshot");
-DATA(insert OID = 2947 (  txid_snapshot_xip			PGNSP PGUID 12 1 50 0 0 f f f f t t i s 1 0 20 "2970" _null_ _null_ _null_ _null_ _null_ txid_snapshot_xip _null_ _null_ _null_ ));
-DESCR("get set of in-progress txids in snapshot");
 DATA(insert OID = 2948 (  txid_visible_in_snapshot	PGNSP PGUID 12 1  0 0 0 f f f f t f i s 2 0 16 "20 2970" _null_ _null_ _null_ _null_ _null_ txid_visible_in_snapshot _null_ _null_ _null_ ));
 DESCR("is txid visible in snapshot?");
 DATA(insert OID = 3360 (  txid_status				PGNSP PGUID 12 1  0 0 0 f f f f t f v s 1 0 25 "20" _null_ _null_ _null_ _null_ _null_ txid_status _null_ _null_ _null_ ));

@@ -101,9 +101,6 @@ InitRecoveryTransactionEnvironment(void)
 void
 ShutdownRecoveryTransactionEnvironment(void)
 {
-	/* Mark all tracked in-progress transactions as finished. */
-	ExpireAllKnownAssignedTransactionIds();
-
 	/* Release all locks the tracked transactions were holding */
 	StandbyReleaseAllLocks();
 
@@ -309,7 +306,7 @@ ResolveRecoveryConflictWithTablespace(Oid tsid)
 	 *
 	 * We don't wait for commit because drop tablespace is non-transactional.
 	 */
-	temp_file_users = GetConflictingVirtualXIDs(InvalidTransactionId,
+	temp_file_users = GetConflictingVirtualXIDs(InvalidCommitSeqNo,
 												InvalidOid);
 	ResolveRecoveryConflictWithVirtualXIDs(temp_file_users,
 										   PROCSIG_RECOVERY_CONFLICT_TABLESPACE);
@@ -606,8 +603,7 @@ StandbyAcquireAccessExclusiveLock(TransactionId xid, Oid dbOid, Oid relOid)
 
 	/* Already processed? */
 	if (!TransactionIdIsValid(xid) ||
-		TransactionIdDidCommit(xid) ||
-		TransactionIdDidAbort(xid))
+		TransactionIdGetStatus(xid) != XID_INPROGRESS)
 		return;
 
 	elog(trace_recovery(DEBUG4),
@@ -722,7 +718,7 @@ StandbyReleaseAllLocks(void)
  *		as long as they're not prepared transactions.
  */
 void
-StandbyReleaseOldLocks(int nxids, TransactionId *xids)
+StandbyReleaseOldLocks(TransactionId oldestRunningXid)
 {
 	ListCell   *cell,
 			   *prev,
@@ -741,26 +737,8 @@ StandbyReleaseOldLocks(int nxids, TransactionId *xids)
 
 		if (StandbyTransactionIdIsPrepared(lock->xid))
 			remove = false;
-		else
-		{
-			int			i;
-			bool		found = false;
-
-			for (i = 0; i < nxids; i++)
-			{
-				if (lock->xid == xids[i])
-				{
-					found = true;
-					break;
-				}
-			}
-
-			/*
-			 * If its not a running transaction, remove it.
-			 */
-			if (!found)
-				remove = true;
-		}
+		else if (TransactionIdPrecedes(lock->xid, oldestRunningXid))
+			remove = true;
 
 		if (remove)
 		{
@@ -815,13 +793,8 @@ standby_redo(XLogReaderState *record)
 		xl_running_xacts *xlrec = (xl_running_xacts *) XLogRecGetData(record);
 		RunningTransactionsData running;
 
-		running.xcnt = xlrec->xcnt;
-		running.subxcnt = xlrec->subxcnt;
-		running.subxid_overflow = xlrec->subxid_overflow;
 		running.nextXid = xlrec->nextXid;
-		running.latestCompletedXid = xlrec->latestCompletedXid;
 		running.oldestRunningXid = xlrec->oldestRunningXid;
-		running.xids = xlrec->xids;
 
 		ProcArrayApplyRecoveryInfo(&running);
 	}
@@ -929,26 +902,7 @@ LogStandbySnapshot(void)
 	 */
 	running = GetRunningTransactionData();
 
-	/*
-	 * GetRunningTransactionData() acquired ProcArrayLock, we must release it.
-	 * For Hot Standby this can be done before inserting the WAL record
-	 * because ProcArrayApplyRecoveryInfo() rechecks the commit status using
-	 * the clog. For logical decoding, though, the lock can't be released
-	 * early because the clog might be "in the future" from the POV of the
-	 * historic snapshot. This would allow for situations where we're waiting
-	 * for the end of a transaction listed in the xl_running_xacts record
-	 * which, according to the WAL, has committed before the xl_running_xacts
-	 * record. Fortunately this routine isn't executed frequently, and it's
-	 * only a shared lock.
-	 */
-	if (wal_level < WAL_LEVEL_LOGICAL)
-		LWLockRelease(ProcArrayLock);
-
 	recptr = LogCurrentRunningXacts(running);
-
-	/* Release lock if we kept it longer ... */
-	if (wal_level >= WAL_LEVEL_LOGICAL)
-		LWLockRelease(ProcArrayLock);
 
 	/* GetRunningTransactionData() acquired XidGenLock, we must release it */
 	LWLockRelease(XidGenLock);
@@ -971,41 +925,20 @@ LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
 	xl_running_xacts xlrec;
 	XLogRecPtr	recptr;
 
-	xlrec.xcnt = CurrRunningXacts->xcnt;
-	xlrec.subxcnt = CurrRunningXacts->subxcnt;
-	xlrec.subxid_overflow = CurrRunningXacts->subxid_overflow;
 	xlrec.nextXid = CurrRunningXacts->nextXid;
 	xlrec.oldestRunningXid = CurrRunningXacts->oldestRunningXid;
-	xlrec.latestCompletedXid = CurrRunningXacts->latestCompletedXid;
 
 	/* Header */
 	XLogBeginInsert();
-	XLogSetRecordFlags(XLOG_MARK_UNIMPORTANT);
-	XLogRegisterData((char *) (&xlrec), MinSizeOfXactRunningXacts);
-
-	/* array of TransactionIds */
-	if (xlrec.xcnt > 0)
-		XLogRegisterData((char *) CurrRunningXacts->xids,
-						 (xlrec.xcnt + xlrec.subxcnt) * sizeof(TransactionId));
+	XLogRegisterData((char *) (&xlrec), SizeOfXactRunningXacts);
 
 	recptr = XLogInsert(RM_STANDBY_ID, XLOG_RUNNING_XACTS);
 
-	if (CurrRunningXacts->subxid_overflow)
-		elog(trace_recovery(DEBUG2),
-			 "snapshot of %u running transactions overflowed (lsn %X/%X oldest xid %u latest complete %u next xid %u)",
-			 CurrRunningXacts->xcnt,
-			 (uint32) (recptr >> 32), (uint32) recptr,
-			 CurrRunningXacts->oldestRunningXid,
-			 CurrRunningXacts->latestCompletedXid,
-			 CurrRunningXacts->nextXid);
-	else
-		elog(trace_recovery(DEBUG2),
-			 "snapshot of %u+%u running transaction ids (lsn %X/%X oldest xid %u latest complete %u next xid %u)",
-			 CurrRunningXacts->xcnt, CurrRunningXacts->subxcnt,
-			 (uint32) (recptr >> 32), (uint32) recptr,
-			 CurrRunningXacts->oldestRunningXid,
-			 CurrRunningXacts->latestCompletedXid,
-			 CurrRunningXacts->nextXid);
+	elog(trace_recovery(DEBUG2),
+		 "snapshot of running transaction ids (lsn %X/%X oldest xid %u next xid %u)",
+		 (uint32) (recptr >> 32), (uint32) recptr,
+		 CurrRunningXacts->oldestRunningXid,
+		 CurrRunningXacts->nextXid);
 
 	/*
 	 * Ensure running_xacts information is synced to disk not too far in the

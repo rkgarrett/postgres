@@ -1236,7 +1236,6 @@ ReorderBufferCopySnap(ReorderBuffer *rb, Snapshot orig_snap,
 	Size		size;
 
 	size = sizeof(SnapshotData) +
-		sizeof(TransactionId) * orig_snap->xcnt +
 		sizeof(TransactionId) * (txn->nsubtxns + 1);
 
 	snap = MemoryContextAllocZero(rb->context, size);
@@ -1245,36 +1244,33 @@ ReorderBufferCopySnap(ReorderBuffer *rb, Snapshot orig_snap,
 	snap->copied = true;
 	snap->active_count = 1;		/* mark as active so nobody frees it */
 	snap->regd_count = 0;
-	snap->xip = (TransactionId *) (snap + 1);
-
-	memcpy(snap->xip, orig_snap->xip, sizeof(TransactionId) * snap->xcnt);
 
 	/*
 	 * snap->subxip contains all txids that belong to our transaction which we
 	 * need to check via cmin/cmax. That's why we store the toplevel
 	 * transaction in there as well.
 	 */
-	snap->subxip = snap->xip + snap->xcnt;
-	snap->subxip[i++] = txn->xid;
+	snap->this_xip = (TransactionId *) (snap + 1);
+	snap->this_xip[i++] = txn->xid;
 
 	/*
 	 * nsubxcnt isn't decreased when subtransactions abort, so count manually.
 	 * Since it's an upper boundary it is safe to use it for the allocation
 	 * above.
 	 */
-	snap->subxcnt = 1;
+	snap->this_xcnt = 1;
 
 	dlist_foreach(iter, &txn->subtxns)
 	{
 		ReorderBufferTXN *sub_txn;
 
 		sub_txn = dlist_container(ReorderBufferTXN, node, iter.cur);
-		snap->subxip[i++] = sub_txn->xid;
-		snap->subxcnt++;
+		snap->this_xip[i++] = sub_txn->xid;
+		snap->this_xcnt++;
 	}
 
 	/* sort so we can bsearch() later */
-	qsort(snap->subxip, snap->subxcnt, sizeof(TransactionId), xidComparator);
+	qsort(snap->this_xip, snap->this_xcnt, sizeof(TransactionId), xidComparator);
 
 	/* store the specified current CommandId */
 	snap->curcid = cid;
@@ -1346,6 +1342,7 @@ ReorderBufferCommit(ReorderBuffer *rb, TransactionId xid,
 	}
 
 	snapshot_now = txn->base_snapshot;
+	Assert(snapshot_now->snapshotcsn != InvalidCommitSeqNo);
 
 	/* build data to be able to lookup the CommandIds of catalog tuples */
 	ReorderBufferBuildTupleCidHash(rb, txn);
@@ -2238,10 +2235,7 @@ ReorderBufferSerializeChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 				snap = change->data.snapshot;
 
-				sz += sizeof(SnapshotData) +
-					sizeof(TransactionId) * snap->xcnt +
-					sizeof(TransactionId) * snap->subxcnt
-					;
+				sz += sizeof(SnapshotData);
 
 				/* make sure we have enough space */
 				ReorderBufferSerializeReserve(rb, sz);
@@ -2251,20 +2245,6 @@ ReorderBufferSerializeChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 				memcpy(data, snap, sizeof(SnapshotData));
 				data += sizeof(SnapshotData);
-
-				if (snap->xcnt)
-				{
-					memcpy(data, snap->xip,
-						   sizeof(TransactionId) * snap->xcnt);
-					data += sizeof(TransactionId) * snap->xcnt;
-				}
-
-				if (snap->subxcnt)
-				{
-					memcpy(data, snap->subxip,
-						   sizeof(TransactionId) * snap->subxcnt);
-					data += sizeof(TransactionId) * snap->subxcnt;
-				}
 				break;
 			}
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM:
@@ -2530,24 +2510,16 @@ ReorderBufferRestoreChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 			}
 		case REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT:
 			{
-				Snapshot	oldsnap;
 				Snapshot	newsnap;
 				Size		size;
 
-				oldsnap = (Snapshot) data;
-
-				size = sizeof(SnapshotData) +
-					sizeof(TransactionId) * oldsnap->xcnt +
-					sizeof(TransactionId) * (oldsnap->subxcnt + 0);
+				size = sizeof(SnapshotData);
 
 				change->data.snapshot = MemoryContextAllocZero(rb->context, size);
 
 				newsnap = change->data.snapshot;
 
 				memcpy(newsnap, data, size);
-				newsnap->xip = (TransactionId *)
-					(((char *) newsnap) + sizeof(SnapshotData));
-				newsnap->subxip = newsnap->xip + newsnap->xcnt;
 				newsnap->copied = true;
 				break;
 			}
@@ -3199,7 +3171,7 @@ UpdateLogicalMappings(HTAB *tuplecid_data, Oid relid, Snapshot snapshot)
 			continue;
 
 		/* not for our transaction */
-		if (!TransactionIdInArray(f_mapped_xid, snapshot->subxip, snapshot->subxcnt))
+		if (!TransactionIdInArray(f_mapped_xid, snapshot->this_xip, snapshot->this_xcnt))
 			continue;
 
 		/* ok, relevant, queue for apply */
@@ -3227,7 +3199,7 @@ UpdateLogicalMappings(HTAB *tuplecid_data, Oid relid, Snapshot snapshot)
 		RewriteMappingFile *f = files_a[off];
 
 		elog(DEBUG1, "applying mapping: \"%s\" in %u", f->fname,
-			 snapshot->subxip[0]);
+			 snapshot->this_xip[0]);
 		ApplyLogicalMappingFile(tuplecid_data, relid, f->fname);
 		pfree(f);
 	}

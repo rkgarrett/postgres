@@ -113,7 +113,6 @@ CheckLogicalDecodingRequirements(void)
 static LogicalDecodingContext *
 StartupDecodingContext(List *output_plugin_options,
 					   XLogRecPtr start_lsn,
-					   TransactionId xmin_horizon,
 					   bool need_full_snapshot,
 					   XLogPageReadCB read_page,
 					   LogicalOutputPluginWriterPrepareWrite prepare_write,
@@ -173,8 +172,7 @@ StartupDecodingContext(List *output_plugin_options,
 
 	ctx->reorder = ReorderBufferAllocate();
 	ctx->snapshot_builder =
-		AllocateSnapshotBuilder(ctx->reorder, xmin_horizon, start_lsn,
-								need_full_snapshot);
+		AllocateSnapshotBuilder(ctx->reorder, start_lsn, need_full_snapshot);
 
 	ctx->reorder->private_data = ctx;
 
@@ -221,7 +219,6 @@ CreateInitDecodingContext(char *plugin,
 						  LogicalOutputPluginWriterWrite do_write,
 						  LogicalOutputPluginWriterUpdateProgress update_progress)
 {
-	TransactionId xmin_horizon = InvalidTransactionId;
 	ReplicationSlot *slot;
 	LogicalDecodingContext *ctx;
 	MemoryContext old_context;
@@ -302,7 +299,7 @@ CreateInitDecodingContext(char *plugin,
 	ReplicationSlotMarkDirty();
 	ReplicationSlotSave();
 
-	ctx = StartupDecodingContext(NIL, InvalidXLogRecPtr, xmin_horizon,
+	ctx = StartupDecodingContext(NIL, InvalidXLogRecPtr,
 								 need_full_snapshot, read_page, prepare_write,
 								 do_write, update_progress);
 
@@ -394,7 +391,7 @@ CreateDecodingContext(XLogRecPtr start_lsn,
 	}
 
 	ctx = StartupDecodingContext(output_plugin_options,
-								 start_lsn, InvalidTransactionId, false,
+								 start_lsn, false,
 								 read_page, prepare_write, do_write,
 								 update_progress);
 
@@ -777,12 +774,12 @@ message_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 }
 
 /*
- * Set the required catalog xmin horizon for historic snapshots in the current
- * replication slot.
+ * Set the oldest snapshot required for historic catalog lookups in the
+ * current replication slot.
  *
- * Note that in the most cases, we won't be able to immediately use the xmin
- * to increase the xmin horizon: we need to wait till the client has confirmed
- * receiving current_lsn with LogicalConfirmReceivedLocation().
+ * Note that in the most cases, we won't be able to immediately use the
+ * snapshot to increase the oldest snapshot, we need to wait till the client
+ * has confirmed receiving current_lsn with LogicalConfirmReceivedLocation().
  */
 void
 LogicalIncreaseXminForSlot(XLogRecPtr current_lsn, TransactionId xmin)

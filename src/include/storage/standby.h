@@ -50,10 +50,7 @@ extern void StandbyAcquireAccessExclusiveLock(TransactionId xid, Oid dbOid, Oid 
 extern void StandbyReleaseLockTree(TransactionId xid,
 					   int nsubxids, TransactionId *subxids);
 extern void StandbyReleaseAllLocks(void);
-extern void StandbyReleaseOldLocks(int nxids, TransactionId *xids);
-
-#define MinSizeOfXactRunningXacts offsetof(xl_running_xacts, xids)
-
+extern void StandbyReleaseOldLocks(TransactionId oldestRunningXid);
 
 /*
  * Declarations for GetRunningTransactionData(). Similar to Snapshots, but
@@ -69,14 +66,8 @@ extern void StandbyReleaseOldLocks(int nxids, TransactionId *xids);
 
 typedef struct RunningTransactionsData
 {
-	int			xcnt;			/* # of xact ids in xids[] */
-	int			subxcnt;		/* # of subxact ids in xids[] */
-	bool		subxid_overflow;	/* snapshot overflowed, subxids missing */
 	TransactionId nextXid;		/* copy of ShmemVariableCache->nextXid */
-	TransactionId oldestRunningXid; /* *not* oldestXmin */
-	TransactionId latestCompletedXid;	/* so we can set xmax */
-
-	TransactionId *xids;		/* array of (sub)xids still running */
+	TransactionId oldestRunningXid;		/* *not* oldestXmin */
 } RunningTransactionsData;
 
 typedef RunningTransactionsData *RunningTransactions;

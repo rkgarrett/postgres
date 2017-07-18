@@ -17633,10 +17633,6 @@ SELECT collation for ('foo' COLLATE "de_DE");
    </indexterm>
 
    <indexterm>
-    <primary>txid_snapshot_xip</primary>
-   </indexterm>
-
-   <indexterm>
     <primary>txid_snapshot_xmax</primary>
    </indexterm>
 
@@ -17681,11 +17677,6 @@ SELECT collation for ('foo' COLLATE "de_DE");
        <entry><literal><function>txid_current_snapshot()</function></literal></entry>
        <entry><type>txid_snapshot</type></entry>
        <entry>get current snapshot</entry>
-      </row>
-      <row>
-       <entry><literal><function>txid_snapshot_xip(<parameter>txid_snapshot</parameter>)</function></literal></entry>
-       <entry><type>setof bigint</type></entry>
-       <entry>get in-progress transaction IDs in snapshot</entry>
       </row>
       <row>
        <entry><literal><function>txid_snapshot_xmax(<parameter>txid_snapshot</parameter>)</function></literal></entry>
