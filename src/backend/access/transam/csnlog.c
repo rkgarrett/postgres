@@ -179,11 +179,9 @@ CSNLogSetPageStatus(TransactionId xid, int nsubxids,
 
 /*
  * Record the parent of a subtransaction in the subtrans log.
- *
- * In some cases we may need to overwrite an existing value.
  */
 void
-SubTransSetParent(TransactionId xid, TransactionId parent, bool overwriteOK)
+SubTransSetParent(TransactionId xid, TransactionId parent)
 {
 	int			pageno = TransactionIdToPage(xid);
 	int			entryno = TransactionIdToPgIndex(xid);
@@ -192,6 +190,7 @@ SubTransSetParent(TransactionId xid, TransactionId parent, bool overwriteOK)
 	CommitSeqNo newcsn;
 
 	Assert(TransactionIdIsValid(parent));
+	Assert(TransactionIdFollows(xid, parent));
 
 	newcsn = CSN_SUBTRANS_BIT | (uint64) parent;
 
@@ -201,13 +200,17 @@ SubTransSetParent(TransactionId xid, TransactionId parent, bool overwriteOK)
 	ptr = (CommitSeqNo *) CsnlogCtl->shared->page_buffer[slotno];
 	ptr += entryno;
 
-	/* Current state should be 0 */
-	Assert(*ptr == COMMITSEQNO_INPROGRESS ||
-		   (*ptr == newcsn && overwriteOK));
-
-	*ptr = newcsn;
-
-	CsnlogCtl->shared->page_dirty[slotno] = true;
+	/*
+	 * It's possible we'll try to set the parent xid multiple times but we
+	 * shouldn't ever be changing the xid from one valid xid to another valid
+	 * xid, which would corrupt the data structure.
+	 */
+	if (*ptr != newcsn)
+	{
+		Assert(*ptr == COMMITSEQNO_INPROGRESS);
+		*ptr = newcsn;
+		SubTransCtl->shared->page_dirty[slotno] = true;
+	}
 
 	LWLockRelease(CSNLogControlLock);
 }
