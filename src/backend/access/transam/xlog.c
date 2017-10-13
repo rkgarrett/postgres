@@ -11649,6 +11649,7 @@ retry:
 	*readTLI = curFileTLI;
 
 	//one portion is here
+	//are we sure that the full header is here?
 	if (!XLogReaderValidatePageHeader(xlogreader, targetPagePtr,
 									  (XLogPageHeader) readBuf))
 		goto next_record_is_invalid;
