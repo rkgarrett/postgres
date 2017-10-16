@@ -1710,6 +1710,8 @@ PhysicalConfirmReceivedLocation(XLogRecPtr lsn)
 
 	Assert(lsn != InvalidXLogRecPtr);
 	SpinLockAcquire(&slot->mutex);
+
+	//OK here here where the restart lsn is set...
 	if (slot->data.restart_lsn != lsn)
 	{
 		changed = true;
@@ -1814,7 +1816,7 @@ ProcessStandbyReplyMessage(void)
 		SyncRepReleaseWaiters();
 
 	/*
-	 * Advance our local xmin horizon when the client confirmed a flush.
+	 * Advance our local xmin horizon when the client confirmed a log flush.
 	 */
 	if (MyReplicationSlot && flushPtr != InvalidXLogRecPtr)
 	{
@@ -1984,7 +1986,10 @@ ProcessStandbyHSFeedbackMessage(void)
 	 * always use the slot mechanism to handle the feedback xmin.
 	 */
 	if (MyReplicationSlot != NULL)	/* XXX: persistency configurable? */
+	{
+		//Here is where the replication slot minimum is set..
 		PhysicalReplicationSlotNewXmin(feedbackXmin, feedbackCatalogXmin);
+	}
 	else
 	{
 		if (TransactionIdIsNormal(feedbackCatalogXmin)

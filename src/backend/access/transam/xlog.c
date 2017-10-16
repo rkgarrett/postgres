@@ -11650,9 +11650,9 @@ retry:
 
 	//one portion is here
 	//are we sure that the full header is here?
-	if (!XLogReaderValidatePageHeader(xlogreader, targetPagePtr,
-									  (XLogPageHeader) readBuf))
-		goto next_record_is_invalid;
+	//if (!XLogReaderValidatePageHeader(xlogreader, targetPagePtr,
+	//								  (XLogPageHeader) readBuf))
+	//	goto next_record_is_invalid;
 
 	return readLen;
 
@@ -11790,7 +11790,8 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 						{
 							//second is here, was tliRecPtr before
 							//this looks risky to switch to tliRecPtr.
-							ptr = RecPtr;
+							//ptr = RecPtr < tliRecPtr ? RecPtr : tliRecPtr;
+							ptr = tliRecPtr;
 							tli = tliOfPointInHistory(tliRecPtr, expectedTLEs);
 
 							if (curFileTLI > 0 && tli < curFileTLI)

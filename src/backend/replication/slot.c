@@ -755,7 +755,7 @@ ReplicationSlotsComputeRequiredLSN(void)
 			continue;
 
 		SpinLockAcquire(&s->mutex);
-		restart_lsn = s->data.restart_lsn;
+		restart_lsn = s->data.restart_lsn;  //each minimum point is here.. restart_lsn
 		SpinLockRelease(&s->mutex);
 
 		if (restart_lsn != InvalidXLogRecPtr &&
@@ -765,6 +765,7 @@ ReplicationSlotsComputeRequiredLSN(void)
 	}
 	LWLockRelease(ReplicationSlotControlLock);
 
+	//Here is the minimal location where the slot is recompiled
 	XLogSetReplicationSlotMinimumLSN(min_required);
 }
 
