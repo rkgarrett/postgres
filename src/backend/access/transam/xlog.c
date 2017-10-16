@@ -11647,13 +11647,6 @@ retry:
 	Assert(reqLen <= readLen);
 
 	*readTLI = curFileTLI;
-
-	//one portion is here
-	//are we sure that the full header is here?
-	if (!XLogReaderValidatePageHeader(xlogreader, targetPagePtr,
-									  (XLogPageHeader) readBuf))
-		goto next_record_is_invalid;
-
 	return readLen;
 
 next_record_is_invalid:
@@ -11788,9 +11781,7 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 						}
 						else
 						{
-							//second is here, was tliRecPtr before
-							//this looks risky to switch to tliRecPtr.
-							ptr = RecPtr;
+							ptr = tliRecPtr;
 							tli = tliOfPointInHistory(tliRecPtr, expectedTLEs);
 
 							if (curFileTLI > 0 && tli < curFileTLI)

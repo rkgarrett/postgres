@@ -28,7 +28,6 @@
 #include "access/xlogrecord.h"
 
 typedef struct XLogReaderState XLogReaderState;
-typedef struct XLogPageHeaderData *XLogPageHeader;
 
 /* Function type definition for the read_page callback */
 typedef int (*XLogPageReadCB) (XLogReaderState *xlogreader,
@@ -205,10 +204,6 @@ extern void XLogReaderFree(XLogReaderState *state);
 /* Read the next XLog record. Returns NULL on end-of-WAL or failure */
 extern struct XLogRecord *XLogReadRecord(XLogReaderState *state,
 			   XLogRecPtr recptr, char **errormsg);
-
-/* Validate a page */
-extern bool XLogReaderValidatePageHeader(XLogReaderState *state,
-					XLogRecPtr recptr, XLogPageHeader hdr);
 
 /* Invalidate read state */
 extern void XLogReaderInvalReadState(XLogReaderState *state);
