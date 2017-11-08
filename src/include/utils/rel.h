@@ -273,114 +273,123 @@ typedef struct AutoVacOpts
 	float8		analyze_scale_factor;
 } AutoVacOpts;
 
-typedef struct StdRdOptions
+typedef struct HeapOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */
 	int			parallel_workers;	/* max number of parallel workers */
-} StdRdOptions;
+} HeapOptions;
+
+typedef struct ToastOptions
+{
+	int32		vl_len_;		/* varlena header (do not touch directly!) */
+	AutoVacOpts autovacuum;		/* autovacuum-related options */
+}	ToastOptions;
 
 #define HEAP_MIN_FILLFACTOR			10
 #define HEAP_DEFAULT_FILLFACTOR		100
 
+#define TOAST_DEFAULT_FILLFACTOR	100 /* Only default is actually used */
+
 /*
- * RelationGetFillFactor
+ * HeapGetFillFactor
  *		Returns the relation's fillfactor.  Note multiple eval of argument!
  */
-#define RelationGetFillFactor(relation, defaultff) \
+#define HeapGetFillFactor(relation, defaultff) \
 	((relation)->rd_options ? \
-	 ((StdRdOptions *) (relation)->rd_options)->fillfactor : (defaultff))
+	 ((HeapOptions *) (relation)->rd_options)->fillfactor : (defaultff))
 
 /*
- * RelationGetTargetPageUsage
- *		Returns the relation's desired space usage per page in bytes.
- */
-#define RelationGetTargetPageUsage(relation, defaultff) \
-	(BLCKSZ * RelationGetFillFactor(relation, defaultff) / 100)
-
-/*
- * RelationGetTargetPageFreeSpace
+ * HeapGetTargetPageFreeSpace
  *		Returns the relation's desired freespace per page in bytes.
  */
-#define RelationGetTargetPageFreeSpace(relation, defaultff) \
-	(BLCKSZ * (100 - RelationGetFillFactor(relation, defaultff)) / 100)
+#define HeapGetTargetPageFreeSpace(relation, defaultff) \
+	(BLCKSZ * (100 - HeapGetFillFactor(relation, defaultff)) / 100)
 
 /*
- * RelationIsUsedAsCatalogTable
+ * HeapIsUsedAsCatalogTable
  *		Returns whether the relation should be treated as a catalog table
  *		from the pov of logical decoding.  Note multiple eval of argument!
  */
-#define RelationIsUsedAsCatalogTable(relation)	\
+#define HeapIsUsedAsCatalogTable(relation)	\
 	((relation)->rd_options && \
 	 ((relation)->rd_rel->relkind == RELKIND_RELATION || \
 	  (relation)->rd_rel->relkind == RELKIND_MATVIEW) ? \
-	 ((StdRdOptions *) (relation)->rd_options)->user_catalog_table : false)
+	 ((HeapOptions *) (relation)->rd_options)->user_catalog_table : false)
 
 /*
- * RelationGetParallelWorkers
+ * HeapGetParallelWorkers
  *		Returns the relation's parallel_workers reloption setting.
  *		Note multiple eval of argument!
  */
-#define RelationGetParallelWorkers(relation, defaultpw) \
+#define HeapGetParallelWorkers(relation, defaultpw) \
 	((relation)->rd_options ? \
-	 ((StdRdOptions *) (relation)->rd_options)->parallel_workers : (defaultpw))
+	 ((HeapOptions *) (relation)->rd_options)->parallel_workers : (defaultpw))
 
+#define ToastGetTargetPageFreeSpace() \
+	(BLCKSZ * (100 - TOAST_DEFAULT_FILLFACTOR) / 100)
 
 /*
  * ViewOptions
  *		Contents of rd_options for views
  */
+
+/*
+ * Definition of items of enum type. Names and codes. To add or modify item
+ * edit both lists
+ */
+#define VIEW_OPTION_CHECK_OPTION_VALUE_NAMES {	\
+	"local",									\
+	"cascaded",									\
+	(const char *) NULL							\
+}
+
+typedef enum view_option_check_option_value_numbers
+{
+	VIEW_OPTION_CHECK_OPTION_NOT_SET = -1,
+	VIEW_OPTION_CHECK_OPTION_LOCAL = 0,
+	VIEW_OPTION_CHECK_OPTION_CASCADED = 1,
+}	view_option_check_option_value_numbers;
+
 typedef struct ViewOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	bool		security_barrier;
-	int			check_option_offset;
+	int			check_option;
 } ViewOptions;
 
 /*
- * RelationIsSecurityView
- *		Returns whether the relation is security view, or not.  Note multiple
- *		eval of argument!
+ * ViewIsSecurityView
+ *		Returns whether the view is security view, or not. Note multiple eval
+ *		of argument!
  */
-#define RelationIsSecurityView(relation)	\
+#define ViewIsSecurityView(relation)		\
 	((relation)->rd_options ?				\
-	 ((ViewOptions *) (relation)->rd_options)->security_barrier : false)
+		((ViewOptions *) (relation)->rd_options)->security_barrier : false)
 
 /*
- * RelationHasCheckOption
- *		Returns true if the relation is a view defined with either the local
- *		or the cascaded check option.  Note multiple eval of argument!
+ * ViewHasCheckOption
+ *		Returns true if view is defined with either the local or the cascaded
+ *		check option. Note multiple eval of argument!
  */
-#define RelationHasCheckOption(relation)									\
-	((relation)->rd_options &&												\
-	 ((ViewOptions *) (relation)->rd_options)->check_option_offset != 0)
+
+#define ViewHasCheckOption(relation)										\
+((relation)->rd_options &&													\
+	((ViewOptions *) (relation)->rd_options)->check_option !=				\
+	VIEW_OPTION_CHECK_OPTION_NOT_SET)
 
 /*
- * RelationHasLocalCheckOption
- *		Returns true if the relation is a view defined with the local check
- *		option.  Note multiple eval of argument!
+ * ViewHasCascadedCheckOption
+ *		Returns true if the view is defined with the cascaded check option.
+ *		Note multiple eval of argument!
  */
-#define RelationHasLocalCheckOption(relation)								\
-	((relation)->rd_options &&												\
-	 ((ViewOptions *) (relation)->rd_options)->check_option_offset != 0 ?	\
-	 strcmp((char *) (relation)->rd_options +								\
-			((ViewOptions *) (relation)->rd_options)->check_option_offset,	\
-			"local") == 0 : false)
 
-/*
- * RelationHasCascadedCheckOption
- *		Returns true if the relation is a view defined with the cascaded check
- *		option.  Note multiple eval of argument!
- */
-#define RelationHasCascadedCheckOption(relation)							\
-	((relation)->rd_options &&												\
-	 ((ViewOptions *) (relation)->rd_options)->check_option_offset != 0 ?	\
-	 strcmp((char *) (relation)->rd_options +								\
-			((ViewOptions *) (relation)->rd_options)->check_option_offset,	\
-			"cascaded") == 0 : false)
-
+#define ViewHasCascadedCheckOption(relation)								\
+((relation)->rd_options &&													\
+	((ViewOptions *) (relation)->rd_options)->check_option ==				\
+	VIEW_OPTION_CHECK_OPTION_CASCADED)
 
 /*
  * RelationIsValid
@@ -559,7 +568,7 @@ typedef struct ViewOptions
 #define RelationIsAccessibleInLogicalDecoding(relation) \
 	(XLogLogicalInfoActive() && \
 	 RelationNeedsWAL(relation) && \
-	 (IsCatalogRelation(relation) || RelationIsUsedAsCatalogTable(relation)))
+	 (IsCatalogRelation(relation) || HeapIsUsedAsCatalogTable(relation)))
 
 /*
  * RelationIsLogicallyLogged

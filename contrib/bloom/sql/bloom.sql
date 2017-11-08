@@ -89,6 +89,16 @@ DROP INDEX bloomidx;
 CREATE INDEX bloomidx ON tst USING bloom (i, t) WITH (length=7, col1=4);
 SELECT reloptions FROM pg_class WHERE oid = 'bloomidx'::regclass;
 -- check for min and max values
-\set VERBOSITY terse
 CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (length=0);
+CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (length=4097);
 CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (col1=0);
+CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (col1=4096);
+-- check post_validate for colN<lengh
+CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (length=10,col1=11);
+
+-- check that ALTERing of reloptions is forbidden
+
+ALTER INDEX bloomidx SET (length=4);
+ALTER INDEX bloomidx SET (col1=4);
+ALTER INDEX bloomidx RESET (length);
+ALTER INDEX bloomidx RESET (col1);

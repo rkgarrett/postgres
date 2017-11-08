@@ -455,7 +455,8 @@ RelationParseRelOptions(Relation relation, HeapTuple tuple)
 	options = extractRelOptions(tuple,
 								GetPgClassDescriptor(),
 								relation->rd_rel->relkind == RELKIND_INDEX ?
-								relation->rd_amroutine->amoptions : NULL);
+							  relation->rd_amroutine->amrelopt_catalog : NULL
+		);
 
 	/*
 	 * Copy parsed data into CacheMemoryContext.  To guard against the

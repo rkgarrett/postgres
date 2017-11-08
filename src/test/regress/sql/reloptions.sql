@@ -47,12 +47,12 @@ SELECT reloptions FROM pg_class WHERE oid = 'reloptions_test'::regclass;
 ALTER TABLE reloptions_test RESET (autovacuum_enabled,
 	autovacuum_analyze_scale_factor);
 SELECT reloptions FROM pg_class WHERE oid = 'reloptions_test'::regclass AND
-reloptions IS NULL;
+	reloptions IS NULL;
 
 -- RESET fails if a value is specified
 ALTER TABLE reloptions_test RESET (fillfactor=12);
 
--- The OIDS option is not stored
+-- The OIDS option is not stored as reloption
 DROP TABLE reloptions_test;
 CREATE TABLE reloptions_test(i INT) WITH (fillfactor=20, oids=true);
 SELECT reloptions, relhasoids FROM pg_class WHERE oid = 'reloptions_test'::regclass;
@@ -74,6 +74,22 @@ SELECT reloptions FROM pg_class WHERE oid = :toast_oid;
 
 -- Fail on non-existent options in toast namespace
 CREATE TABLE reloptions_test2 (i int) WITH (toast.not_existing_option = 42);
+
+-- Fail on setting reloption to a table that does not have a TOAST relation
+CREATE TABLE reloptions_test2 (i int) WITH (toast.autovacuum_vacuum_cost_delay = 23 );
+DROP TABLE reloptions_test;
+
+CREATE TABLE reloptions_test(i INT);
+ALTER TABLE reloptions_test SET (toast.autovacuum_vacuum_cost_delay = 23);
+ALTER TABLE reloptions_test RESET (toast.autovacuum_vacuum_cost_delay);
+
+-- autovacuum_analyze_scale_factor and autovacuum_analyze_threshold should be
+-- accepted by heap but rejected by toast (special case)
+DROP TABLE reloptions_test;
+CREATE TABLE reloptions_test (s VARCHAR) WITH (autovacuum_analyze_scale_factor=1, autovacuum_analyze_threshold=1);
+
+CREATE TABLE reloptions_test2 (s VARCHAR) WITH (toast.autovacuum_analyze_scale_factor=1);
+CREATE TABLE reloptions_test2 (s VARCHAR) WITH (toast.autovacuum_analyze_threshold=1);
 
 -- Mix TOAST & heap
 DROP TABLE reloptions_test;

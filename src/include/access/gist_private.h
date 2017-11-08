@@ -367,6 +367,24 @@ typedef struct GISTBuildBuffers
 	int			rootlevel;
 } GISTBuildBuffers;
 
+
+/*
+ * Definition of items of enum type. Names and codes. To add or modify item
+ * edit both lists
+ */
+#define GIST_OPTION_BUFFERING_VALUE_NAMES { \
+	"on",									\
+	"off",									\
+	"auto",									\
+	(const char *) NULL						\
+}
+typedef enum gist_option_buffering_value_numbers
+{
+	GIST_OPTION_BUFFERING_ON = 0,
+	GIST_OPTION_BUFFERING_OFF = 1,
+	GIST_OPTION_BUFFERING_AUTO = 2,
+}	gist_option_buffering_value_numbers;
+
 /*
  * Storage type for GiST's reloptions
  */
@@ -374,7 +392,7 @@ typedef struct GiSTOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
-	int			bufferingModeOffset;	/* use buffering build? */
+	int			buffering_mode; /* use buffering build? */
 } GiSTOptions;
 
 /* gist.c */
@@ -435,7 +453,6 @@ extern bool gistvalidate(Oid opclassoid);
 #define GIST_MIN_FILLFACTOR			10
 #define GIST_DEFAULT_FILLFACTOR		90
 
-extern bytea *gistoptions(Datum reloptions, bool validate);
 extern bool gistproperty(Oid index_oid, int attno,
 			 IndexAMProperty prop, const char *propname,
 			 bool *res, bool *isnull);
@@ -485,6 +502,7 @@ extern void gistMakeUnionKey(GISTSTATE *giststate, int attno,
 				 Datum *dst, bool *dstisnull);
 
 extern XLogRecPtr gistGetFakeLSN(Relation rel);
+extern void *gistgetreloptcatalog(void);
 
 /* gistvacuum.c */
 extern IndexBulkDeleteResult *gistbulkdelete(IndexVacuumInfo *info,
@@ -503,7 +521,6 @@ extern void gistSplitByKey(Relation r, Page page, IndexTuple *itup,
 /* gistbuild.c */
 extern IndexBuildResult *gistbuild(Relation heap, Relation index,
 		  struct IndexInfo *indexInfo);
-extern void gistValidateBufferingOption(char *value);
 
 /* gistbuildbuffers.c */
 extern GISTBuildBuffers *gistInitBuildBuffers(int pagesPerBuffer, int levelStep,

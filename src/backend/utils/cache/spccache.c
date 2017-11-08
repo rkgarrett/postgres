@@ -149,7 +149,10 @@ get_tablespace(Oid spcid)
 			opts = NULL;
 		else
 		{
-			bytea	   *bytea_opts = tablespace_reloptions(datum, false);
+			bytea	   *bytea_opts;
+
+			bytea_opts = optionsTextArrayToBytea(
+									get_tablespace_options_catalog(), datum);
 
 			opts = MemoryContextAlloc(CacheMemoryContext, VARSIZE(bytea_opts));
 			memcpy(opts, bytea_opts, VARSIZE(bytea_opts));
@@ -194,7 +197,6 @@ get_tablespace_page_costs(Oid spcid,
 		else
 			*spc_random_page_cost = spc->opts->random_page_cost;
 	}
-
 	if (spc_seq_page_cost)
 	{
 		if (!spc->opts || spc->opts->seq_page_cost < 0)

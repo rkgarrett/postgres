@@ -329,7 +329,7 @@ DefineIndex(Oid relationId,
 	Form_pg_am	accessMethodForm;
 	IndexAmRoutine *amRoutine;
 	bool		amcanorder;
-	amoptions_function amoptions;
+	amrelopt_catalog_function amoption_catalog;
 	Datum		reloptions;
 	int16	   *coloptions;
 	IndexInfo  *indexInfo;
@@ -535,7 +535,7 @@ DefineIndex(Oid relationId,
 						accessMethodName)));
 
 	amcanorder = amRoutine->amcanorder;
-	amoptions = amRoutine->amoptions;
+	amoption_catalog = amRoutine->amrelopt_catalog;
 
 	pfree(amRoutine);
 	ReleaseSysCache(tuple);
@@ -549,10 +549,18 @@ DefineIndex(Oid relationId,
 	/*
 	 * Parse AM-specific options, convert to text array form, validate.
 	 */
-	reloptions = transformRelOptions((Datum) 0, stmt->options,
-									 NULL, NULL, false, false);
-
-	(void) index_reloptions(amoptions, reloptions, true);
+	if (amoption_catalog)
+	{
+		reloptions = transformOptions(amoption_catalog(),
+									  (Datum) 0, stmt->options, 0);
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("access method %s does not support options",
+						accessMethodName)));
+	}
 
 	/*
 	 * Prepare arguments for index_create, primarily an IndexInfo structure.

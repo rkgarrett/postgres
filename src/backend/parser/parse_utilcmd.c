@@ -1524,7 +1524,7 @@ generateClonedIndexStmt(CreateStmtContext *cxt, Relation source_idx,
 	datum = SysCacheGetAttr(RELOID, ht_idxrel,
 							Anum_pg_class_reloptions, &isnull);
 	if (!isnull)
-		index->options = untransformRelOptions(datum);
+		index->options = optionsTextArrayToDefList(datum);
 
 	/* If it's a partial index, decompile and append the predicate */
 	datum = SysCacheGetAttr(INDEXRELID, ht_idx,

@@ -21,6 +21,7 @@
 #include "access/nbtree.h"
 #include "access/relscan.h"
 #include "access/xlog.h"
+#include "access/reloptions.h"
 #include "catalog/index.h"
 #include "commands/vacuum.h"
 #include "pgstat.h"
@@ -33,7 +34,6 @@
 #include "utils/builtins.h"
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
-
 
 /* Working state for btbuild and its callback */
 typedef struct
@@ -115,8 +115,7 @@ static void btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			 BTCycleId cycleid);
 static void btvacuumpage(BTVacState *vstate, BlockNumber blkno,
 			 BlockNumber orig_blkno);
-
-
+static void * btgetreloptcatalog (void);
 /*
  * Btree handler function: return IndexAmRoutine with access method parameters
  * and callbacks.
@@ -149,7 +148,6 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->amvacuumcleanup = btvacuumcleanup;
 	amroutine->amcanreturn = btcanreturn;
 	amroutine->amcostestimate = btcostestimate;
-	amroutine->amoptions = btoptions;
 	amroutine->amproperty = btproperty;
 	amroutine->amvalidate = btvalidate;
 	amroutine->ambeginscan = btbeginscan;
@@ -159,6 +157,7 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->amendscan = btendscan;
 	amroutine->ammarkpos = btmarkpos;
 	amroutine->amrestrpos = btrestrpos;
+	amroutine->amrelopt_catalog = btgetreloptcatalog;
 	amroutine->amestimateparallelscan = btestimateparallelscan;
 	amroutine->aminitparallelscan = btinitparallelscan;
 	amroutine->amparallelrescan = btparallelrescan;
@@ -1389,4 +1388,27 @@ bool
 btcanreturn(Relation index, int attno)
 {
 	return true;
+}
+
+
+static options_catalog *bt_relopt_catalog = NULL;
+
+static void *
+btgetreloptcatalog(void)
+{
+	if (!bt_relopt_catalog)
+	{
+		bt_relopt_catalog = allocateOptionsCatalog(NULL,
+												   sizeof(BTRelOptions), 1);
+
+		optionsCatalogAddItemInt(bt_relopt_catalog, "fillfactor",
+						   "Packs btree index pages only to this percentage",
+								 ShareUpdateExclusiveLock,		/* since it applies only
+																 * to later inserts */
+								 0,
+								 offsetof(BTRelOptions, fillfactor),
+								 BTREE_DEFAULT_FILLFACTOR,
+								 BTREE_MIN_FILLFACTOR, 100);
+	}
+	return bt_relopt_catalog;
 }

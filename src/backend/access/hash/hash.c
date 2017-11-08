@@ -79,7 +79,6 @@ hashhandler(PG_FUNCTION_ARGS)
 	amroutine->amvacuumcleanup = hashvacuumcleanup;
 	amroutine->amcanreturn = NULL;
 	amroutine->amcostestimate = hashcostestimate;
-	amroutine->amoptions = hashoptions;
 	amroutine->amproperty = NULL;
 	amroutine->amvalidate = hashvalidate;
 	amroutine->ambeginscan = hashbeginscan;
@@ -89,6 +88,7 @@ hashhandler(PG_FUNCTION_ARGS)
 	amroutine->amendscan = hashendscan;
 	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
+	amroutine->amrelopt_catalog = hashgetreloptcatalog;
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
 	amroutine->amparallelrescan = NULL;

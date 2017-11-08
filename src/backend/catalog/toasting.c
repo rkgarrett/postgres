@@ -36,7 +36,7 @@
 /* Potentially set by pg_upgrade_support functions */
 Oid			binary_upgrade_next_toast_pg_type_oid = InvalidOid;
 
-static void CheckAndCreateToastTable(Oid relOid, Datum reloptions,
+static bool CheckAndCreateToastTable(Oid relOid, Datum reloptions,
 						 LOCKMODE lockmode, bool check);
 static bool create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 				   Datum reloptions, LOCKMODE lockmode, bool check);
@@ -67,23 +67,26 @@ NewHeapCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode)
 	CheckAndCreateToastTable(relOid, reloptions, lockmode, false);
 }
 
-void
+bool
 NewRelationCreateToastTable(Oid relOid, Datum reloptions)
 {
-	CheckAndCreateToastTable(relOid, reloptions, AccessExclusiveLock, false);
+	return CheckAndCreateToastTable(relOid, reloptions,
+									AccessExclusiveLock, false);
 }
 
-static void
+static bool
 CheckAndCreateToastTable(Oid relOid, Datum reloptions, LOCKMODE lockmode, bool check)
 {
 	Relation	rel;
+	bool		success;
 
 	rel = heap_open(relOid, lockmode);
 
 	/* create_toast_table does all the work */
-	(void) create_toast_table(rel, InvalidOid, InvalidOid, reloptions, lockmode, check);
+	success = create_toast_table(rel, InvalidOid, InvalidOid, reloptions, lockmode, check);
 
 	heap_close(rel, NoLock);
+	return success;
 }
 
 /*

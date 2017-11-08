@@ -84,7 +84,7 @@ typedef struct GinState
 
 
 /* ginutil.c */
-extern bytea *ginoptions(Datum reloptions, bool validate);
+extern Datum ginhandler(PG_FUNCTION_ARGS);
 extern void initGinState(GinState *state, Relation index);
 extern Buffer GinNewBuffer(Relation index);
 extern void GinInitBuffer(Buffer b, uint32 f);
@@ -103,6 +103,7 @@ extern Datum *ginExtractEntries(GinState *ginstate, OffsetNumber attnum,
 extern OffsetNumber gintuple_get_attrnum(GinState *ginstate, IndexTuple tuple);
 extern Datum gintuple_get_key(GinState *ginstate, IndexTuple tuple,
 				 GinNullCategory *category);
+extern void *gingetreloptcatalog(void);
 
 /* gininsert.c */
 extern IndexBuildResult *ginbuild(Relation heap, Relation index,

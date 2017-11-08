@@ -37,6 +37,9 @@ typedef struct BrinStatsData
 
 
 #define BRIN_DEFAULT_PAGES_PER_RANGE	128
+#define BRIN_MIN_PAGES_PER_RANGE		1
+#define BRIN_MAX_PAGES_PER_RANGE		131072
+
 #define BrinGetPagesPerRange(relation) \
 	((relation)->rd_options ? \
 	 ((BrinOptions *) (relation)->rd_options)->pagesPerRange : \

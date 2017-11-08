@@ -323,7 +323,10 @@ RelationGetBufferForTuple(Relation relation, Size len,
 						len, MaxHeapTupleSize)));
 
 	/* Compute desired extra freespace due to fillfactor option */
-	saveFreeSpace = RelationGetTargetPageFreeSpace(relation,
+	if (IsToastRelation(relation))
+		saveFreeSpace = ToastGetTargetPageFreeSpace();
+	else
+		saveFreeSpace = HeapGetTargetPageFreeSpace(relation,
 												   HEAP_DEFAULT_FILLFACTOR);
 
 	if (otherBuffer != InvalidBuffer)

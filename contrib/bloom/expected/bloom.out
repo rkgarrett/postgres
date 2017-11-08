@@ -222,8 +222,27 @@ SELECT reloptions FROM pg_class WHERE oid = 'bloomidx'::regclass;
 (1 row)
 
 -- check for min and max values
-\set VERBOSITY terse
 CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (length=0);
 ERROR:  value 0 out of bounds for option "length"
+DETAIL:  Valid values are between "1" and "4096".
+CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (length=4097);
+ERROR:  value 4097 out of bounds for option "length"
+DETAIL:  Valid values are between "1" and "4096".
 CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (col1=0);
 ERROR:  value 0 out of bounds for option "col1"
+DETAIL:  Valid values are between "1" and "4095".
+CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (col1=4096);
+ERROR:  value 4096 out of bounds for option "col1"
+DETAIL:  Valid values are between "1" and "4095".
+-- check post_validate for colN<lengh
+CREATE INDEX bloomidx2 ON tst USING bloom (i, t) WITH (length=10,col1=11);
+ERROR:  col0 should not be grater than length
+-- check that ALTERing of reloptions is forbidden
+ALTER INDEX bloomidx SET (length=4);
+ERROR:  changing parameter "length" is not allowed
+ALTER INDEX bloomidx SET (col1=4);
+ERROR:  changing parameter "col1" is not allowed
+ALTER INDEX bloomidx RESET (length);
+ERROR:  changing parameter "length" is not allowed
+ALTER INDEX bloomidx RESET (col1);
+ERROR:  changing parameter "col1" is not allowed

@@ -15,7 +15,7 @@
 
 #include "postgres.h"
 
-#include "access/reloptions.h"
+#include "access/options.h"
 #include "access/spgist_private.h"
 #include "access/transam.h"
 #include "access/xact.h"
@@ -59,7 +59,6 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amvacuumcleanup = spgvacuumcleanup;
 	amroutine->amcanreturn = spgcanreturn;
 	amroutine->amcostestimate = spgcostestimate;
-	amroutine->amoptions = spgoptions;
 	amroutine->amproperty = NULL;
 	amroutine->amvalidate = spgvalidate;
 	amroutine->ambeginscan = spgbeginscan;
@@ -69,6 +68,7 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amendscan = spgendscan;
 	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
+	amroutine->amrelopt_catalog = spggetreloptcatalog;
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
 	amroutine->amparallelrescan = NULL;
@@ -384,8 +384,8 @@ SpGistGetBuffer(Relation index, int flags, int needSpace, bool *isNew)
 	 * related to the ones already on it.  But fillfactor mustn't cause an
 	 * error for requests that would otherwise be legal.
 	 */
-	needSpace += RelationGetTargetPageFreeSpace(index,
-												SPGIST_DEFAULT_FILLFACTOR);
+	needSpace += (BLCKSZ * (100 - SpGistGetFillFactor(index)) / 100);
+
 	needSpace = Min(needSpace, SPGIST_PAGE_CAPACITY);
 
 	/* Get the cache entry for this flags setting */
@@ -554,15 +554,6 @@ SpGistInitMetapage(Page page)
 	 */
 	((PageHeader) page)->pd_lower =
 		((char *) metadata + sizeof(SpGistMetaPageData)) - (char *) page;
-}
-
-/*
- * reloptions processing for SPGiST
- */
-bytea *
-spgoptions(Datum reloptions, bool validate)
-{
-	return default_reloptions(reloptions, validate, RELOPT_KIND_SPGIST);
 }
 
 /*
@@ -930,4 +921,28 @@ SpGistPageAddNewItem(SpGistState *state, Page page, Item item, Size size,
 			 (int) size);
 
 	return offnum;
+}
+
+
+
+static options_catalog *spgist_relopt_catalog = NULL;
+
+void *
+spggetreloptcatalog(void)
+{
+	if (!spgist_relopt_catalog)
+	{
+		spgist_relopt_catalog = allocateOptionsCatalog(NULL,
+												sizeof(SpGistRelOptions), 1);
+
+		optionsCatalogAddItemInt(spgist_relopt_catalog, "fillfactor",
+						  "Packs spgist index pages only to this percentage",
+								 ShareUpdateExclusiveLock,		/* since it applies only
+																 * to later inserts */
+								 0,
+								 offsetof(SpGistRelOptions, fillfactor),
+								 SPGIST_DEFAULT_FILLFACTOR,
+								 SPGIST_MIN_FILLFACTOR, 100);
+	}
+	return spgist_relopt_catalog;
 }

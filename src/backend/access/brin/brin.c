@@ -19,7 +19,7 @@
 #include "access/brin_page.h"
 #include "access/brin_pageops.h"
 #include "access/brin_xlog.h"
-#include "access/reloptions.h"
+#include "access/options.h"
 #include "access/relscan.h"
 #include "access/xloginsert.h"
 #include "catalog/index.h"
@@ -73,6 +73,7 @@ static void union_tuples(BrinDesc *bdesc, BrinMemTuple *a,
 			 BrinTuple *b);
 static void brin_vacuum_scan(Relation idxrel, BufferAccessStrategy strategy);
 
+static void *bringetreloptcatalog(void);
 
 /*
  * BRIN handler function: return IndexAmRoutine with access method parameters
@@ -106,7 +107,6 @@ brinhandler(PG_FUNCTION_ARGS)
 	amroutine->amvacuumcleanup = brinvacuumcleanup;
 	amroutine->amcanreturn = NULL;
 	amroutine->amcostestimate = brincostestimate;
-	amroutine->amoptions = brinoptions;
 	amroutine->amproperty = NULL;
 	amroutine->amvalidate = brinvalidate;
 	amroutine->ambeginscan = brinbeginscan;
@@ -116,6 +116,7 @@ brinhandler(PG_FUNCTION_ARGS)
 	amroutine->amendscan = brinendscan;
 	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
+	amroutine->amrelopt_catalog = bringetreloptcatalog;
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
 	amroutine->amparallelrescan = NULL;
@@ -800,37 +801,6 @@ brinvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 }
 
 /*
- * reloptions processor for BRIN indexes
- */
-bytea *
-brinoptions(Datum reloptions, bool validate)
-{
-	relopt_value *options;
-	BrinOptions *rdopts;
-	int			numoptions;
-	static const relopt_parse_elt tab[] = {
-		{"pages_per_range", RELOPT_TYPE_INT, offsetof(BrinOptions, pagesPerRange)},
-		{"autosummarize", RELOPT_TYPE_BOOL, offsetof(BrinOptions, autosummarize)}
-	};
-
-	options = parseRelOptions(reloptions, validate, RELOPT_KIND_BRIN,
-							  &numoptions);
-
-	/* if none set, we're done */
-	if (numoptions == 0)
-		return NULL;
-
-	rdopts = allocateReloptStruct(sizeof(BrinOptions), options, numoptions);
-
-	fillRelOptions((void *) rdopts, sizeof(BrinOptions), options, numoptions,
-				   validate, tab, lengthof(tab));
-
-	pfree(options);
-
-	return (bytea *) rdopts;
-}
-
-/*
  * SQL-callable function to scan through an index and summarize all ranges
  * that are not currently summarized.
  */
@@ -1462,4 +1432,34 @@ brin_vacuum_scan(Relation idxrel, BufferAccessStrategy strategy)
 	 */
 	if (vacuum_fsm)
 		FreeSpaceMapVacuum(idxrel);
+}
+
+static options_catalog *brin_relopt_catalog = NULL;
+
+static void *
+bringetreloptcatalog(void)
+{
+	if (!brin_relopt_catalog)
+	{
+		brin_relopt_catalog = allocateOptionsCatalog(NULL,
+													 sizeof(BrinOptions), 2);
+
+		optionsCatalogAddItemInt(brin_relopt_catalog, "pages_per_range",
+			   "Number of pages that each page range covers in a BRIN index",
+								 NoLock,		/* since ALTER is not allowed
+												 * no lock needed */
+								 OPTION_DEFINITION_FLAG_FORBID_ALTER,
+								 offsetof(BrinOptions, pagesPerRange),
+								 BRIN_DEFAULT_PAGES_PER_RANGE,
+								 BRIN_MIN_PAGES_PER_RANGE,
+								 BRIN_MAX_PAGES_PER_RANGE);
+
+		optionsCatalogAddItemBool(brin_relopt_catalog, "autosummarize",
+						"Enables automatic summarization on this BRIN index",
+								  AccessExclusiveLock,
+								  0,
+								  offsetof(BrinOptions, autosummarize),
+								  false);
+	}
+	return brin_relopt_catalog;
 }

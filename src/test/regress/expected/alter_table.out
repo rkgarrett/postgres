@@ -2463,7 +2463,9 @@ ERROR:  unrecognized parameter "autovacuum_enabled"
 alter view my_locks set (autovacuum_enabled = false);
 ERROR:  unrecognized parameter "autovacuum_enabled"
 alter table my_locks reset (autovacuum_enabled);
+ERROR:  unrecognized parameter "autovacuum_enabled"
 alter view my_locks reset (autovacuum_enabled);
+ERROR:  unrecognized parameter "autovacuum_enabled"
 begin;
 alter view my_locks set (security_barrier=off);
 select * from my_locks order by 1;

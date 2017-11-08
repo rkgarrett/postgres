@@ -1003,6 +1003,8 @@ ProcessUtilitySlow(ParseState *pstate,
 						{
 							Datum		toast_options;
 							static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
+							List	   *toastDefList;
+							bool		success;
 
 							/* Create the table itself */
 							address = DefineRelation((CreateStmt *) stmt,
@@ -1023,18 +1025,24 @@ ProcessUtilitySlow(ParseState *pstate,
 							 * parse and validate reloptions for the toast
 							 * table
 							 */
-							toast_options = transformRelOptions((Datum) 0,
-																((CreateStmt *) stmt)->options,
-																"toast",
-																validnsps,
-																true,
-																false);
-							(void) heap_reloptions(RELKIND_TOASTVALUE,
-												   toast_options,
-												   true);
 
-							NewRelationCreateToastTable(address.objectId,
-														toast_options);
+							optionsDefListValdateNamespaces(
+											  ((CreateStmt *) stmt)->options,
+															validnsps);
+
+							toastDefList = optionsDefListFilterNamespaces(
+									((CreateStmt *) stmt)->options, "toast");
+
+							toast_options = transformOptions(
+									   get_toast_relopt_catalog(), (Datum) 0,
+															 toastDefList, 0);
+
+							success = NewRelationCreateToastTable(
+											address.objectId, toast_options);
+							if (!success && toast_options)
+								ereport(ERROR,
+								   (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+									errmsg("no TOAST relation was created for a table. Can't set toast.* storage parameters")));
 						}
 						else if (IsA(stmt, CreateForeignTableStmt))
 						{
@@ -1101,8 +1109,13 @@ ProcessUtilitySlow(ParseState *pstate,
 					 * lock on (for example) a relation on which we have no
 					 * permissions.
 					 */
-					lockmode = AlterTableGetLockLevel(atstmt->cmds);
-					relid = AlterTableLookupRelation(atstmt, lockmode);
+
+					relid = AlterTableLookupRelation(atstmt, NoLock);
+					if (OidIsValid(relid))
+					{
+						lockmode = AlterTableGetLockLevel(relid, atstmt->cmds);
+						relid = AlterTableLookupRelation(atstmt, lockmode);
+					}
 
 					if (OidIsValid(relid))
 					{

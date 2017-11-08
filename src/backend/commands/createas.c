@@ -89,6 +89,8 @@ create_ctas_internal(List *attrList, IntoClause *into)
 	Datum		toast_options;
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 	ObjectAddress intoRelationAddr;
+	List	   *toastDefList;
+	bool		toast_created;
 
 	/* This code supports both CREATE TABLE AS and CREATE MATERIALIZED VIEW */
 	is_matview = (into->viewQuery != NULL);
@@ -122,15 +124,20 @@ create_ctas_internal(List *attrList, IntoClause *into)
 	CommandCounterIncrement();
 
 	/* parse and validate reloptions for the toast table */
-	toast_options = transformRelOptions((Datum) 0,
-										create->options,
-										"toast",
-										validnsps,
-										true, false);
 
-	(void) heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
 
-	NewRelationCreateToastTable(intoRelationAddr.objectId, toast_options);
+	optionsDefListValdateNamespaces(create->options, validnsps);
+	toastDefList = optionsDefListFilterNamespaces(create->options, "toast");
+
+	toast_options = transformOptions(get_toast_relopt_catalog(), (Datum) 0,
+									 toastDefList, 0);
+
+	toast_created = NewRelationCreateToastTable(intoRelationAddr.objectId,
+												toast_options);
+	if (!toast_created && toast_options)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("no TOAST relation was created for a table. Can't set toast.* storage parameters")));
 
 	/* Create the "view" part of a materialized view. */
 	if (is_matview)

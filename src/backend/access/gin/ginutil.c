@@ -16,7 +16,7 @@
 
 #include "access/gin_private.h"
 #include "access/ginxlog.h"
-#include "access/reloptions.h"
+#include "access/options.h"
 #include "access/xloginsert.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
@@ -26,7 +26,8 @@
 #include "utils/builtins.h"
 #include "utils/index_selfuncs.h"
 #include "utils/typcache.h"
-
+#include "utils/memutils.h"
+#include "utils/guc.h"
 
 /*
  * GIN handler function: return IndexAmRoutine with access method parameters
@@ -60,7 +61,6 @@ ginhandler(PG_FUNCTION_ARGS)
 	amroutine->amvacuumcleanup = ginvacuumcleanup;
 	amroutine->amcanreturn = NULL;
 	amroutine->amcostestimate = gincostestimate;
-	amroutine->amoptions = ginoptions;
 	amroutine->amproperty = NULL;
 	amroutine->amvalidate = ginvalidate;
 	amroutine->ambeginscan = ginbeginscan;
@@ -70,6 +70,7 @@ ginhandler(PG_FUNCTION_ARGS)
 	amroutine->amendscan = ginendscan;
 	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
+	amroutine->amrelopt_catalog = gingetreloptcatalog;
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
 	amroutine->amparallelrescan = NULL;
@@ -603,35 +604,6 @@ ginExtractEntries(GinState *ginstate, OffsetNumber attnum,
 	return entries;
 }
 
-bytea *
-ginoptions(Datum reloptions, bool validate)
-{
-	relopt_value *options;
-	GinOptions *rdopts;
-	int			numoptions;
-	static const relopt_parse_elt tab[] = {
-		{"fastupdate", RELOPT_TYPE_BOOL, offsetof(GinOptions, useFastUpdate)},
-		{"gin_pending_list_limit", RELOPT_TYPE_INT, offsetof(GinOptions,
-															 pendingListCleanupSize)}
-	};
-
-	options = parseRelOptions(reloptions, validate, RELOPT_KIND_GIN,
-							  &numoptions);
-
-	/* if none set, we're done */
-	if (numoptions == 0)
-		return NULL;
-
-	rdopts = allocateReloptStruct(sizeof(GinOptions), options, numoptions);
-
-	fillRelOptions((void *) rdopts, sizeof(GinOptions), options, numoptions,
-				   validate, tab, lengthof(tab));
-
-	pfree(options);
-
-	return (bytea *) rdopts;
-}
-
 /*
  * Fetch index's statistical data into *stats
  *
@@ -717,4 +689,33 @@ ginUpdateStats(Relation index, const GinStatsData *stats)
 	UnlockReleaseBuffer(metabuffer);
 
 	END_CRIT_SECTION();
+}
+
+
+static options_catalog *gin_relopt_catalog = NULL;
+
+void *
+gingetreloptcatalog(void)
+{
+	if (!gin_relopt_catalog)
+	{
+		gin_relopt_catalog = allocateOptionsCatalog(NULL,
+													sizeof(GinOptions), 2);
+
+		optionsCatalogAddItemBool(gin_relopt_catalog, "fastupdate",
+						"Enables \"fast update\" feature for this GIN index",
+								  AccessExclusiveLock,
+								  0,
+								  offsetof(GinOptions, useFastUpdate),
+								  GIN_DEFAULT_USE_FASTUPDATE);
+
+		optionsCatalogAddItemInt(gin_relopt_catalog, "gin_pending_list_limit",
+		 "Maximum size of the pending list for this GIN index, in kilobytes",
+								 AccessExclusiveLock,
+								 0,
+								 offsetof(GinOptions, pendingListCleanupSize),
+								 -1, 64, MAX_KILOBYTES);
+
+	}
+	return gin_relopt_catalog;
 }

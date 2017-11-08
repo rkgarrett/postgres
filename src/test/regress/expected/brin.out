@@ -507,3 +507,8 @@ EXPLAIN (COSTS OFF) SELECT * FROM brin_test WHERE b = 1;
    Filter: (b = 1)
 (2 rows)
 
+-- Check that changing reloptions for brin index is not allowed
+ALTER INDEX brinidx SET (pages_per_range = 10);
+ERROR:  changing parameter "pages_per_range" is not allowed
+ALTER INDEX brinidx RESET (pages_per_range);
+ERROR:  changing parameter "pages_per_range" is not allowed

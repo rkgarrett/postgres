@@ -15,7 +15,7 @@
 #include "postgres.h"
 
 #include "access/hash.h"
-#include "access/reloptions.h"
+#include "access/options.h"
 #include "access/relscan.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -284,12 +284,6 @@ _hash_checkpage(Relation rel, Buffer buf, int flags)
 							RelationGetRelationName(rel)),
 					 errhint("Please REINDEX it.")));
 	}
-}
-
-bytea *
-hashoptions(Datum reloptions, bool validate)
-{
-	return default_reloptions(reloptions, validate, RELOPT_KIND_HASH);
 }
 
 /*
@@ -626,4 +620,29 @@ _hash_kill_items(IndexScanDesc scan)
 		LockBuffer(so->currPos.buf, BUFFER_LOCK_UNLOCK);
 	else
 		_hash_relbuf(rel, buf);
+}
+
+static options_catalog *hash_relopt_catalog = NULL;
+
+void *
+hashgetreloptcatalog(void)
+{
+	if (!hash_relopt_catalog)
+	{
+		hash_relopt_catalog = allocateOptionsCatalog(NULL,
+												  sizeof(HashRelOptions), 1);
+
+		optionsCatalogAddItemInt(hash_relopt_catalog, "fillfactor",
+							"Packs hash index pages only to this percentage",
+								 NoLock,		/* No ALTER -- no lock */
+								 OPTION_DEFINITION_FLAG_FORBID_ALTER,	/* fillfactor is actualy
+																		 * stored in metapage
+																		 * and should not be
+																		 * changed once index is
+																		 * created */
+								 offsetof(HashRelOptions, fillfactor),
+								 HASH_DEFAULT_FILLFACTOR,
+								 HASH_MIN_FILLFACTOR, 100);
+	}
+	return hash_relopt_catalog;
 }

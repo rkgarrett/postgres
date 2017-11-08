@@ -28,6 +28,15 @@ select g+100000, point(g*10+1, g*10+1) from generate_series(1, 10000) g;
 -- To test vacuum, delete some entries from all over the index.
 delete from gist_point_tbl where id % 2 = 1;
 
+-- Test buffering and fillfactor reloption takes valid values
+create index gist_pointidx2 on gist_point_tbl using gist(p) with (buffering = on, fillfactor=50);
+create index gist_pointidx3 on gist_point_tbl using gist(p) with (buffering = off);
+create index gist_pointidx4 on gist_point_tbl using gist(p) with (buffering = auto);
+--Test buffering and fillfactor for refising invalid values
+create index gist_pointidx5 on gist_point_tbl using gist(p) with (buffering = invalid_value);
+create index gist_pointidx5 on gist_point_tbl using gist(p) with (fillfactor=9);
+create index gist_pointidx5 on gist_point_tbl using gist(p) with (fillfactor=101);
+
 -- And also delete some concentration of values. (GiST doesn't currently
 -- attempt to delete pages even when they become empty, but if it did, this
 -- would exercise it)

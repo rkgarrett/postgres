@@ -18,13 +18,12 @@
 
 #include "access/gist_private.h"
 #include "access/htup_details.h"
-#include "access/reloptions.h"
+#include "access/options.h"
 #include "catalog/pg_opclass.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
 #include "utils/syscache.h"
-
 
 /*
  * Write itup vector to page, has no control of free space.
@@ -832,34 +831,6 @@ gistNewBuffer(Relation r)
 	return buffer;
 }
 
-bytea *
-gistoptions(Datum reloptions, bool validate)
-{
-	relopt_value *options;
-	GiSTOptions *rdopts;
-	int			numoptions;
-	static const relopt_parse_elt tab[] = {
-		{"fillfactor", RELOPT_TYPE_INT, offsetof(GiSTOptions, fillfactor)},
-		{"buffering", RELOPT_TYPE_STRING, offsetof(GiSTOptions, bufferingModeOffset)}
-	};
-
-	options = parseRelOptions(reloptions, validate, RELOPT_KIND_GIST,
-							  &numoptions);
-
-	/* if none set, we're done */
-	if (numoptions == 0)
-		return NULL;
-
-	rdopts = allocateReloptStruct(sizeof(GiSTOptions), options, numoptions);
-
-	fillRelOptions((void *) rdopts, sizeof(GiSTOptions), options, numoptions,
-				   validate, tab, lengthof(tab));
-
-	pfree(options);
-
-	return (bytea *) rdopts;
-}
-
 /*
  *	gistproperty() -- Check boolean properties of indexes.
  *
@@ -998,4 +969,34 @@ gistGetFakeLSN(Relation rel)
 		Assert(rel->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED);
 		return GetFakeLSNForUnloggedRel();
 	}
+}
+
+static options_catalog *gist_relopt_catalog = NULL;
+
+void *
+gistgetreloptcatalog(void)
+{
+	static const char *enum_names[] = GIST_OPTION_BUFFERING_VALUE_NAMES;
+
+	if (!gist_relopt_catalog)
+	{
+		gist_relopt_catalog = allocateOptionsCatalog(NULL,
+													 sizeof(GiSTOptions), 2);
+
+		optionsCatalogAddItemInt(gist_relopt_catalog, "fillfactor",
+							"Packs gist index pages only to this percentage",
+								 NoLock,		/* No ALTER, no lock */
+								 OPTION_DEFINITION_FLAG_FORBID_ALTER,
+								 offsetof(GiSTOptions, fillfactor),
+								 GIST_DEFAULT_FILLFACTOR,
+								 GIST_MIN_FILLFACTOR, 100);
+		optionsCatalogAddItemEnum(gist_relopt_catalog, "buffering",
+							   "Enables buffering build for this GiST index",
+								  NoLock,		/* No ALTER, no lock */
+								  OPTION_DEFINITION_FLAG_FORBID_ALTER,
+								  offsetof(GiSTOptions, buffering_mode),
+								  enum_names,
+								  GIST_OPTION_BUFFERING_AUTO);
+	}
+	return gist_relopt_catalog;
 }

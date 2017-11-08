@@ -427,6 +427,17 @@ typedef BTScanOpaqueData *BTScanOpaque;
 #define SK_BT_DESC			(INDOPTION_DESC << SK_BT_INDOPTION_SHIFT)
 #define SK_BT_NULLS_FIRST	(INDOPTION_NULLS_FIRST << SK_BT_INDOPTION_SHIFT)
 
+typedef struct BTRelOptions
+{
+	int32		varlena_header_;	/* varlena header (do not touch directly!) */
+	int			fillfactor;		/* page fill factor in percent (0..100) */
+}	BTRelOptions;
+
+#define BTGetFillFactor(relation) \
+	((relation)->rd_options ? \
+		((BTRelOptions *) (relation)->rd_options)->fillfactor : \
+		BTREE_DEFAULT_FILLFACTOR)
+
 /*
  * external entry points for btree, in nbtree.c
  */
@@ -534,7 +545,6 @@ extern void _bt_end_vacuum(Relation rel);
 extern void _bt_end_vacuum_callback(int code, Datum arg);
 extern Size BTreeShmemSize(void);
 extern void BTreeShmemInit(void);
-extern bytea *btoptions(Datum reloptions, bool validate);
 extern bool btproperty(Oid index_oid, int attno,
 		   IndexAMProperty prop, const char *propname,
 		   bool *res, bool *isnull);

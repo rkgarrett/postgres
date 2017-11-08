@@ -20,10 +20,6 @@
 #include "lib/stringinfo.h"
 
 
-/* reloption parameters */
-#define SPGIST_MIN_FILLFACTOR			10
-#define SPGIST_DEFAULT_FILLFACTOR		80
-
 /* SPGiST opclass support function numbers */
 #define SPGIST_CONFIG_PROC				1
 #define SPGIST_CHOOSE_PROC				2
@@ -180,9 +176,6 @@ typedef struct spgLeafConsistentOut
 	bool		recheck;		/* set true if operator must be rechecked */
 } spgLeafConsistentOut;
 
-
-/* spgutils.c */
-extern bytea *spgoptions(Datum reloptions, bool validate);
 
 /* spginsert.c */
 extern IndexBuildResult *spgbuild(Relation heap, Relation index,

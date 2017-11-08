@@ -149,7 +149,10 @@ get_attribute_options(Oid attrelid, int attnum)
 				opts = NULL;
 			else
 			{
-				bytea	   *bytea_opts = attribute_reloptions(datum, false);
+				bytea	   *bytea_opts;
+
+				bytea_opts = optionsTextArrayToBytea(
+									 get_attribute_options_catalog(), datum);
 
 				opts = MemoryContextAlloc(CacheMemoryContext,
 										  VARSIZE(bytea_opts));

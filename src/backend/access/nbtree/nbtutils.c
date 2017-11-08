@@ -18,7 +18,7 @@
 #include <time.h>
 
 #include "access/nbtree.h"
-#include "access/reloptions.h"
+#include "storage/lock.h"
 #include "access/relscan.h"
 #include "miscadmin.h"
 #include "utils/array.h"
@@ -2036,12 +2036,6 @@ BTreeShmemInit(void)
 	}
 	else
 		Assert(found);
-}
-
-bytea *
-btoptions(Datum reloptions, bool validate)
-{
-	return default_reloptions(reloptions, validate, RELOPT_KIND_BTREE);
 }
 
 /*

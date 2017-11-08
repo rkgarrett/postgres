@@ -2689,7 +2689,10 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 	bool		need_cids = RelationIsAccessibleInLogicalDecoding(relation);
 
 	needwal = !(options & HEAP_INSERT_SKIP_WAL) && RelationNeedsWAL(relation);
-	saveFreeSpace = RelationGetTargetPageFreeSpace(relation,
+	if (IsToastRelation(relation))
+		saveFreeSpace = ToastGetTargetPageFreeSpace();
+	else
+		saveFreeSpace = HeapGetTargetPageFreeSpace(relation,
 												   HEAP_DEFAULT_FILLFACTOR);
 
 	/* Toast and set header data in all the tuples */

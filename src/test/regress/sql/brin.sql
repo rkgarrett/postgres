@@ -460,3 +460,6 @@ VACUUM ANALYZE brin_test;
 EXPLAIN (COSTS OFF) SELECT * FROM brin_test WHERE a = 1;
 -- Ensure brin index is not used when values are not correlated
 EXPLAIN (COSTS OFF) SELECT * FROM brin_test WHERE b = 1;
+-- Check that changing reloptions for brin index is not allowed
+ALTER INDEX brinidx SET (pages_per_range = 10);
+ALTER INDEX brinidx RESET (pages_per_range);
