@@ -36,9 +36,8 @@ clean distclean maintainer-clean:
 	       pg_upgrade_dump_globals.sql \
 	       pg_upgrade_dump_*.custom pg_upgrade_*.log
 
-check: test.sh
+check:
 	$(prove_check)
-	MAKE=$(MAKE) bindir=$(bindir) libdir=$(libdir) EXTRA_REGRESS_OPTS="$(EXTRA_REGRESS_OPTS)" $(SHELL) $< --install
 
 installcheck:
 	$(prove_installcheck)

@@ -422,13 +422,14 @@ sub init
 
 	$params{allows_streaming} = 0 unless defined $params{allows_streaming};
 	$params{has_archiving}    = 0 unless defined $params{has_archiving};
+	$params{pg_regress} = $ENV{PG_REGRESS} unless defined $params{pg_regress};
 
 	mkdir $self->backup_dir;
 	mkdir $self->archive_dir;
 
 	TestLib::system_or_bail("$bindir/initdb", '-D', $pgdata, '-A', 'trust',
 		'-N', @{ $params{extra} });
-	TestLib::system_or_bail($ENV{PG_REGRESS}, '--config-auth', $pgdata);
+	TestLib::system_or_bail($params{pg_regress}, '--config-auth', $pgdata);
 
 	open my $conf, '>>', "$pgdata/postgresql.conf";
 	print $conf "\n# Added by PostgresNode.pm\n";
@@ -683,7 +684,7 @@ sub start
 	BAIL_OUT("node \"$name\" is already running") if defined $self->{_pid};
 	print("### Starting node \"$name\"\n");
 	my $ret = TestLib::system_log("$bindir/pg_ctl", '-D', $self->data_dir,
-		'-l', $self->logfile, 'start');
+		'-l', $self->logfile, '-w', 'start');
 
 	if ($ret != 0)
 	{
@@ -904,7 +905,7 @@ which can only create objects of class C<PostgresNode>.
 sub get_new_node
 {
 	my $class = 'PostgresNode';
-	$class = shift if 1 < scalar @_;
+	$class = shift if 2 < scalar @_;
 	my $name  = shift;
 	my $bindir = shift;
 	my $found = 0;
