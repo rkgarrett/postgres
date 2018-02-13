@@ -520,7 +520,7 @@ postgresGetForeignRelSize(PlannerInfo *root,
 
 	/* Look up foreign-table catalog info. */
 	fpinfo->table = GetForeignTable(foreigntableid);
-	fpinfo->server = GetForeignServer(fpinfo->table->serverid);
+	fpinfo->server = GetForeignServer(fpinfo->table->serverid, false);
 
 	/*
 	 * Extract user-settable option values.  Note that per-table setting of
@@ -2053,7 +2053,7 @@ postgresIsForeignRelUpdatable(Relation rel)
 	updatable = true;
 
 	table = GetForeignTable(RelationGetRelid(rel));
-	server = GetForeignServer(table->serverid);
+	server = GetForeignServer(table->serverid, false);
 
 	foreach(lc, server->options)
 	{
@@ -3998,7 +3998,7 @@ postgresAcquireSampleRowsFunc(Relation relation, int elevel,
 	 * owner, even if the ANALYZE was started by some other user.
 	 */
 	table = GetForeignTable(RelationGetRelid(relation));
-	server = GetForeignServer(table->serverid);
+	server = GetForeignServer(table->serverid, false);
 	user = GetUserMapping(relation->rd_rel->relowner, table->serverid);
 	conn = GetConnection(user, false);
 
@@ -4221,7 +4221,7 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 	 * Get connection to the foreign server.  Connection manager will
 	 * establish new connection if necessary.
 	 */
-	server = GetForeignServer(serverOid);
+	server = GetForeignServer(serverOid, false);
 	mapping = GetUserMapping(GetUserId(), server->serverid);
 	conn = GetConnection(mapping, false);
 

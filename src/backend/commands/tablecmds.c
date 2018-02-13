@@ -9563,8 +9563,8 @@ ATExecAlterColumnGenericOptions(Relation rel,
 				 errmsg("foreign table \"%s\" does not exist",
 						RelationGetRelationName(rel))));
 	fttableform = (Form_pg_foreign_table) GETSTRUCT(tuple);
-	server = GetForeignServer(fttableform->ftserver);
-	fdw = GetForeignDataWrapper(server->fdwid);
+	server = GetForeignServer(fttableform->ftserver, false);
+	fdw = GetForeignDataWrapper(server->fdwid, false);
 
 	heap_close(ftrel, AccessShareLock);
 	ReleaseSysCache(tuple);
@@ -12466,8 +12466,8 @@ ATExecGenericOptions(Relation rel, List *options)
 				 errmsg("foreign table \"%s\" does not exist",
 						RelationGetRelationName(rel))));
 	tableform = (Form_pg_foreign_table) GETSTRUCT(tuple);
-	server = GetForeignServer(tableform->ftserver);
-	fdw = GetForeignDataWrapper(server->fdwid);
+	server = GetForeignServer(tableform->ftserver, false);
+	fdw = GetForeignDataWrapper(server->fdwid, false);
 
 	memset(repl_val, 0, sizeof(repl_val));
 	memset(repl_null, false, sizeof(repl_null));

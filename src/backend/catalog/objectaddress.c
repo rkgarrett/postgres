@@ -3206,7 +3206,7 @@ getObjectDescription(const ObjectAddress *object)
 			{
 				ForeignDataWrapper *fdw;
 
-				fdw = GetForeignDataWrapper(object->objectId);
+				fdw = GetForeignDataWrapper(object->objectId, false);
 				appendStringInfo(&buffer, _("foreign-data wrapper %s"), fdw->fdwname);
 				break;
 			}
@@ -3215,7 +3215,7 @@ getObjectDescription(const ObjectAddress *object)
 			{
 				ForeignServer *srv;
 
-				srv = GetForeignServer(object->objectId);
+				srv = GetForeignServer(object->objectId, false);
 				appendStringInfo(&buffer, _("server %s"), srv->servername);
 				break;
 			}
@@ -3235,7 +3235,7 @@ getObjectDescription(const ObjectAddress *object)
 						 object->objectId);
 				umform = (Form_pg_user_mapping) GETSTRUCT(tup);
 				useid = umform->umuser;
-				srv = GetForeignServer(umform->umserver);
+				srv = GetForeignServer(umform->umserver, false);
 
 				ReleaseSysCache(tup);
 
@@ -4713,7 +4713,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 			{
 				ForeignDataWrapper *fdw;
 
-				fdw = GetForeignDataWrapper(object->objectId);
+				fdw = GetForeignDataWrapper(object->objectId, false);
 				appendStringInfoString(&buffer, quote_identifier(fdw->fdwname));
 				if (objname)
 					*objname = list_make1(pstrdup(fdw->fdwname));
@@ -4724,7 +4724,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 			{
 				ForeignServer *srv;
 
-				srv = GetForeignServer(object->objectId);
+				srv = GetForeignServer(object->objectId, false);
 				appendStringInfoString(&buffer,
 									   quote_identifier(srv->servername));
 				if (objname)
@@ -4747,7 +4747,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 						 object->objectId);
 				umform = (Form_pg_user_mapping) GETSTRUCT(tup);
 				useid = umform->umuser;
-				srv = GetForeignServer(umform->umserver);
+				srv = GetForeignServer(umform->umserver, false);
 
 				ReleaseSysCache(tup);
 
