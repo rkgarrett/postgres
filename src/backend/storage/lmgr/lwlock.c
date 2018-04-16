@@ -81,6 +81,7 @@
 #include "pg_trace.h"
 #include "postmaster/postmaster.h"
 #include "replication/slot.h"
+#include "storage/ioseq.h"
 #include "storage/ipc.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
@@ -338,6 +339,13 @@ NumLWLocksByNamedTranches(void)
 
 	for (i = 0; i < NamedLWLockTrancheRequests; i++)
 		numLocks += NamedLWLockTrancheRequestArray[i].num_lwlocks;
+
+	//XXX change that method of allocation and calculation...
+	/*
+	 * For double-write buffers:  2 writeLocks, 1 allocLock, and one lock
+	 * per batch in the double-write buffers.
+	 */
+	numLocks += 3 + 2 * MAX_BATCHES_PER_DWBUF;
 
 	return numLocks;
 }

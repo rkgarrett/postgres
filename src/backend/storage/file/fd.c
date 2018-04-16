@@ -88,6 +88,7 @@
 #include "portability/mem.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "storage/smgr.h"
 #include "utils/guc.h"
 #include "utils/resowner_private.h"
 
@@ -2067,6 +2068,235 @@ retry:
 
 	return returnCode;
 }
+
+struct io_iocb_common
+{
+	void	   *buf;
+	unsigned	nbytes;
+	long long	offset;
+};
+
+struct iocb
+{
+	void	   *data;
+	int			aio_fildes;
+	union
+	{
+		struct io_iocb_common c;
+	}			u;
+};
+
+/* Array of iocbs used for io_submit */
+struct iocb ioc[MAX_BATCH_BLOCKS];
+int			iocIndex = 0;
+
+/* Array of iovecs use for iocbs and for writev.  One extra entry for
+ * double-write header. */
+struct iovec iov[MAX_BATCH_BLOCKS + 1];
+int			iovIndex = 0;
+
+/*
+ * Return number of bytes described by the list of memory regions (struct
+ * iovec elements) referenced by ioc.
+ */
+static int
+iovlen(struct iocb *ioc)
+{
+	int			i,
+				len;
+	struct iovec *iov = (struct iovec *) ioc->u.c.buf;
+
+	len = 0;
+	for (i = 0; i < ioc->u.c.nbytes; i++)
+	{
+		len += iov->iov_len;
+		iov++;
+	}
+	return len;
+}
+
+/*
+ * Flush existing batched IOs, doing a write to a double-write file first
+ * if double_writes option is turned on.  When called, iov[] lists all
+ * the memory regions being written, in order, and ioc[] groups together
+ * consecutive iov elements which go to consecutive locations on disk.
+ * Each ioc represents a set of memory regions that can be written to
+ * disk in a single write using writev().
+ */
+static int
+FlushIOs(File doubleWriteFile)
+{
+	int			returnCode;
+	int			i,
+				j;
+
+	if (doubleWriteFile > 0)
+	{
+		returnCode = FileAccess(doubleWriteFile);
+		if (returnCode < 0)
+			return returnCode;
+		returnCode = lseek(VfdCache[doubleWriteFile].fd, 0, SEEK_SET);
+		if (returnCode < 0)
+		{
+			elog(LOG, "lseek error errno %d, rc %d",
+				 errno, returnCode);
+			return returnCode;
+		}
+
+		/*
+		 * Write out all the blocks sequentially in double-write file,
+		 * starting with the double-write file header describing all the
+		 * buffers.
+		 */
+		returnCode = writev(VfdCache[doubleWriteFile].fd, &iov[0], iovIndex);
+		if (returnCode < 0)
+		{
+			elog(LOG, "writev to tmp, errno %d, rc %d, iovIndex %d",
+				 errno, returnCode, iovIndex);
+			return returnCode;
+		}
+#if 0
+		returnCode = fdatasync(VfdCache[doubleWriteFile].fd);
+		if (returnCode < 0)
+		{
+			elog(LOG, "fdatasync error errno %d, rc %d", errno,
+				 returnCode);
+			return returnCode;
+		}
+#endif
+	}
+
+	for (i = 0; i < iocIndex; i++)
+	{
+		returnCode = lseek(ioc[i].aio_fildes, ioc[i].u.c.offset, SEEK_SET);
+		if (returnCode < 0)
+		{
+			elog(LOG, "lseek error errno %d, rc %d, offset %Ld",
+				 errno, returnCode, ioc[i].u.c.offset);
+			return returnCode;
+		}
+		/* Use writev to do one IO per consecutive blocks to the disk. */
+		returnCode = writev(ioc[i].aio_fildes, ioc[i].u.c.buf,
+							ioc[i].u.c.nbytes);
+		if (returnCode < 0)
+		{
+			elog(LOG, "writev error errno %d, rc %d", errno, returnCode);
+			return returnCode;
+		}
+	}
+	if (doubleWriteFile > 0)
+	{
+		/*
+		 * If we are doing double writes, must make sure that the blocks was
+		 * just wrote are forced to disk, so we can re-use double-write buffer
+		 * next time.
+		 */
+		for (i = 0; i < iocIndex; i++)
+		{
+			for (j = 0; j < i; j++)
+			{
+				if (ioc[j].aio_fildes == ioc[i].aio_fildes)
+				{
+					break;
+				}
+			}
+			if (j == i)
+			{
+				returnCode = fdatasync(ioc[i].aio_fildes);
+				if (returnCode < 0)
+				{
+					elog(LOG, "fdatasync error errno %d, rc %d", errno,
+						 returnCode);
+					return returnCode;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+/*
+ * Write out a batch of memory regions (Postgres buffers) to locations in
+ * files, as specified in writeList.  If doubleWriteFile is >= 0, then
+ * also do double writes to the specified file (so full_page_writes can
+ * be avoided).
+ */
+int
+FileBwrite(int writeLen, struct SMgrWriteList *writeList,
+		   File doubleWriteFile, char *doubleBuf)
+{
+	int			returnCode;
+	int			i;
+
+	for (i = 0; i < writeLen; i++)
+	{
+		struct SMgrWriteList *w = &(writeList[i]);
+
+		Assert(FileIsValid(w->fd));
+		DO_DB(elog(LOG, "FileBwrite: %d (%s) " INT64_FORMAT " %d %p",
+				   file, VfdCache[w->fd].fileName,
+				   (int64) VfdCache[w->fd].seekPos,
+				   w->len, w->callerBuf));
+
+		returnCode = FileAccess(w->fd);
+		if (returnCode < 0) {
+			return returnCode;
+		}
+	}
+
+	iovIndex = 0;
+	iocIndex = 0;
+
+	if (doubleWriteFile > 0)
+	{
+		/*
+		 * Write out the double-write header (which lists all the blocks) in a
+		 * 4K chunk at the beginning of the double-write file.
+		 */
+		iov[iovIndex].iov_base = doubleBuf;
+		iov[iovIndex].iov_len = DOUBLE_WRITE_HEADER_SIZE;
+		iovIndex++;
+	}
+
+	/*
+	 * Convert the list of writes (writeList) into an iovec array iov that
+	 * describes all the memory regions being written, and an ioc array for
+	 * each consecutive set of iov elements which are going to the consecutive
+	 * locations in the same file.	Each ioc element describes a set of memory
+	 * regions that can be written to the disk in a single write usinf
+	 * writev() (also known as a scatter-gather array).
+	 */
+	for (i = 0; i < writeLen; i++)
+	{
+		struct SMgrWriteList *w = &(writeList[i]);
+		struct iocb *last;
+
+		iov[iovIndex].iov_base = w->buffer;
+		iov[iovIndex].iov_len = w->len;
+		last = (iocIndex > 0) ? &(ioc[iocIndex - 1]) : NULL;
+		if (iocIndex > 0 && w->seekPos == last->u.c.offset + iovlen(last) &&
+			last->aio_fildes == VfdCache[w->fd].fd)
+		{
+			last->u.c.nbytes++;
+		}
+		else
+		{
+			ioc[iocIndex].aio_fildes = VfdCache[w->fd].fd;
+			ioc[iocIndex].u.c.buf = (void *) &iov[iovIndex];
+			ioc[iocIndex].u.c.nbytes = 1;
+			ioc[iocIndex].u.c.offset = w->seekPos;
+			iocIndex++;
+		}
+		iovIndex++;
+		VfdCache[w->fd].seekPos = FileUnknownPos;
+	}
+
+	returnCode = FlushIOs(doubleWriteFile);
+
+	return returnCode;
+}
+
+
 
 int
 FileSync(File file, uint32 wait_event_info)

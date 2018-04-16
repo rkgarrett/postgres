@@ -357,7 +357,7 @@ end_heap_rewrite(RewriteState state)
 	 * wrote before the checkpoint.
 	 */
 	if (RelationNeedsWAL(state->rs_new_rel))
-		heap_sync(state->rs_new_rel);
+		heap_sync(state->rs_new_rel, state->rs_use_wal);
 
 	logical_end_heap_rewrite(state);
 

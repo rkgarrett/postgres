@@ -905,6 +905,12 @@ PostmasterMain(int argc, char *argv[])
 		ereport(ERROR,
 				(errmsg("WAL streaming (max_wal_senders > 0) requires wal_level \"replica\" or \"logical\"")));
 
+	/* The double-write option currently requires data page checksums. */
+	// XXX: is that really necessary?
+	if (double_writes && !data_checksums)
+		ereport(ERROR,
+				(errmsg("page_checksum must be enabled if double_writes is enabled"));
+
 	/*
 	 * Other one-time internal sanity checks can go here, if they are fast.
 	 * (Put any slow processing further down, after postmaster.pid creation.)

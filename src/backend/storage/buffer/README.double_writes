@@ -1,0 +1,186 @@
+DOUBLE WRITES
+
+The "double_write" GUC option enables the use of double write
+functionality, which can be used as a replacement for full page writes.
+The idea of this option is to handle the problem of torn writes for
+buffer pages by writing (almost) all buffers twice, once to a
+double-write file and once to the data file.  The two writes are done in
+a strictly sequential order, ensuring that the buffer is successfully
+written to the double-write file before being written to the data file.
+The "double_write" option (like full page writes) is only a crash
+recovery feature -- it does not affect the database contents unless there
+is a crash.
+
+The double-write file has checksummed contents, and in our
+implementation, the pages in the data files are also be checksummed,
+though this is not strictly required.  If a crash occurs while buffer
+writes (using double writes) are in progress, then a buffer page may have
+a torn page in either the double-write file or in its data file.
+However, because of the ordering of writes, there can only be a torn page
+for that buffer in the double-write file or the data file, not both.
+Therefore, during crash recovery, we can scan the double-write file.  If
+a page in the double-write file has a correct checksum, and the
+corresponding page in the data file has an incorrect checksum, then we
+can restore the torn data page from the double-write file.  Any pages in
+the double-write file that have incorrect checksum are ignored (since
+they are likely torn pages).
+
+The net result is that "double_write" option fixes all torn data pages,
+and can therefore be used in place of "full_page_writes".  Using
+double_writes may improve performance, as compared to
+"full_page_writes", and always greatly reduces the size of the WAL log.
+
+As currently written, the double_write option makes use of checksums on
+the data pages.  Double writes only strictly require that the pages in
+the double-write file be checksummed, and we could fairly easily change
+the implementation to make data checksums optional.  However, if data
+checksums are used, then Postgres can provide more useful messages on
+exactly when torn pages have occurred.  It is very likely that a torn
+page happened if, during recovery, the checksum of a data page is
+incorrect, but a copy of the page with a valid checksum is in the
+double-write file.  If there are no data checksums, then Postgres would
+would still copy any valid page in the double-write file to the
+appropriate page in a data file, but it cannot actually know if a torn
+page occurred.
+
+
+BATCHING WRITES USING A DOUBLE-WRITE BUFFER
+
+A double write requires that data be written first to the
+double-write file and fully committed to disk, and then to the data
+files.  The data files must also be fully committed to disk so that the
+double-write file can be re-used.  Because of the two writes and the
+associated fsyncs, double writes can be expensive.  One way to improve
+the efficiency of double writes is to do double writes for multiple pages
+at once.
+
+The current implementation does this batching of page writes by using a
+"double-write buffer".  For each page that the checkpointer, bgwriter,
+autovacuum process, or backend need to write out with double writes, the
+process puts the page (sequentially) in a double-write buffer and just
+continues on.  Note that the page must be fully copied into the
+double-write buffer (which can be folded in with a checksum computation
+if enabled), since the process will release locks and continue without
+waiting.  When the double-write buffer is full, the process that made it
+full then flushes the buffer to disk, doing the appropriate writes and
+fsyncs to the double-write file and then to the data files.
+
+Since the pages in the double-write buffer are "on the way" to disk, the
+double-write buffer must checked first when processes go to read pages
+from disk.  Conveniently, this lookup can be done at the beginning of
+smgrread().  The copying of a page to the double-write buffer
+(instead of going immediately to disk) can be done at the beginning of
+smgrwrite() if double writes are enabled.
+
+Another important point is that the current contents of the double-write
+buffer must be flushed as a checkpoint completes to ensure the contents
+of the checkpoint is on disk.
+
+To reduce blocking when one process is actually writing out the contents
+of the double-write buffer, we have actually divided the double-write
+buffer into batches.  For example, the double-write buffer could be 128
+pages long, but with batches of 32 each.  When any process completes a
+batch as it adds its page to the double-write buffer, that process then
+flushes the batch to disk (doing the appropriate double write).  The
+double-write buffer is a circular buffer that is reused appropriately.
+To avoid extra contention, each batch in the double-write buffer writes
+to a different double-write file, so each batch can be written out
+independently as soon as the batch is filled.
+
+Our design also has two independent double-write buffers: one for the
+checkpointer and one for all other processes.  The checkpointer gets its
+own buffer in order to help ensure that it complete its checkpoints on
+time.  We have also included some code (in ioseq.h/ioseq.c) that sorts
+buffers to be checkpointed in file/block order.  This sorting greatly
+improves the performance of double-writes for the checkpointer, because
+it ensures that each batch writes to only one or a few data files.  This
+minimizes the number of fsyncs to data files that must be done by each
+batch double write.  In addition, the sorting makes it more likely that
+writes to sequential locations in a data file can be merged.  The use of
+a separate double-write buffer for the checkpointer ensures that the
+benefit of the sorting is maximized.
+
+The actual batch writes are done using writev(), which might have to be
+replaced with equivalent code, if this is a portability issue.  A struct
+iocb structure is currently used for bookkeeping during the low-level
+batching, since it is compatible with an async IO approach as well (not
+included). Given the batching functionality, double writes are
+implemented efficiently by writing a batch of pages to the double-write
+file and fsyncing, and then writing the pages to the appropriate data
+files, and then fsyncing all the necessary data files.  While the data
+fsyncing might be viewed as expensive, it does help eliminate a lot of
+the fsync overhead at the end of checkpoints.
+
+Note that direct IO (the O_DIRECT option in Linux) could be used for the
+double-write file, if there were no portability concerns.  In that case,
+we write the whole set of buffers to the double-write file in a single
+direct write, and no fsync in necessary.  We would avoid copying
+overhead, and any use of the buffer cache.  We would in that case need to
+make sure that the double-write file is fully-allocated ahead of time
+(which is the only case when Linux actually guarantees that IO will be
+direct to disk).  Or we could do the fsync just to guarantee that that
+the IO makes it to disk.
+
+The fsyncing of the data files is necessary to be sure that the
+double-write file can be reused for the next batch of buffers.  All
+buffers must be successfully written to the data files on disk before the
+double-write file is reused.  Strictly speaking, the data files only need
+to be fsync'ed by the time that the double-write file must be used again.
+
+
+DOUBLE-WRITE FILES
+
+When we write to a double-write file, we include a header that identifies
+each block in the double-write file and a checksum for each block (and is
+checksummed itself).  We use this header during recovery to determine the
+contents of the double-write file and whether each block was fully
+written (i.e. not torn).  The length of the double-write header is set as
+4096 bytes, and must be large enough to hold information on
+MAX_BATCH_BLOCKS blocks.  (See Assert() in smgrbwrite().)
+
+
+WHEN TO DO DOUBLE WRITES
+
+Double writes must be done for any page which might be used after
+recovery even if there was a full crash while writing the page.  This
+includes all writes to such pages in a checkpoint, not just the first
+write.  Pages in temporary tables and some unlogged operations do not
+require double writes.  This is controlled by flags in heap_sync() and
+FlushRelationBuffers().  The double writes must be done whether the
+process doing the writing is a checkpointer, bgwriter, vacuumer, or
+backend.  Fortunately, the double-write buffer helps merge together
+double-writes by individual backends.
+
+
+PERFORMANCE
+
+We have seen significant performance gains for OLTP runs with sufficient
+buffer cache size.  In these runs, there are smaller numbers of dirty
+evictions, and the checkpointer is doing the majority of the buffer writes.
+In that case, the number of writes is not being greatly increased.  We
+are doing each buffer write twice, but we are eliminating the full page
+write that goes to WAL log for each modification of a buffer in a
+checkpoint.  Also, the double-write file is written sequentially in a
+single write, so it is highly efficient.  Though we are doing many
+fsyncs, we are doing them in the context of the checkpointer (and
+possibly in the bgwriter).  Meanwhile, we have removed the latency added
+to each transaction when the backend must sync a full page write to the WAL
+log for the first modification of a buffer.
+
+OPTIONS
+
+The three options in this patch are double_writes,
+double_write_directory, and batched_buffer_writes.
+
+double_writes controls whether double writes are used for buffer writes.
+It requires that page_checksum is enabled, and that batched_buffer_writes
+is non-zero.  Generally, the user would turn off full_page_writes is
+double_writes is enabled.
+
+double_write_directory controls the directory where the double-write file
+is located.  If it is not set, then the double-write file is in the base
+directory.  This option could be used to put the double-write file on some
+high-speed media (such as SSD).
+
+The batched_buffer_writes option controls the batch size and must divide
+evenly into the double-write buffer sizes.

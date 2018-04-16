@@ -4848,7 +4848,7 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 
 		/* If we skipped writing WAL, then we need to sync the heap. */
 		if (hi_options & HEAP_INSERT_SKIP_WAL)
-			heap_sync(newrel);
+			heap_sync(newrel, false);
 
 		heap_close(newrel, NoLock);
 	}
@@ -10969,7 +10969,7 @@ ATExecSetTableSpace(Oid tableOid, Oid newTableSpace, LOCKMODE lockmode)
 	 * in shared buffers.  We assume no new changes will be made while we are
 	 * holding exclusive lock on the rel.
 	 */
-	FlushRelationBuffers(rel);
+	FlushRelationBuffers(rel, true);
 
 	/*
 	 * Relfilenodes are not unique in databases across tablespaces, so we need
@@ -11269,7 +11269,7 @@ copy_relation_data(SMgrRelation src, SMgrRelation dst,
 		/* If we got a cancel signal during the copy of the data, quit */
 		CHECK_FOR_INTERRUPTS();
 
-		smgrread(src, forkNum, blkno, buf);
+		smgrread(src, forkNum, blkno, buf, NULL);
 
 		if (!PageIsVerified(page, blkno))
 			ereport(ERROR,

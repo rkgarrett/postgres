@@ -6805,6 +6805,14 @@ StartupXLOG(void)
 		InRecovery = true;
 	}
 
+	/*
+	 * If double write file exists, see if there are any pages to be recovered
+	 * because of torn writes.      This must be done whether or not double_writes
+	 * or full_page_writes is currently enabled, in order to recover any torn
+	 * pages if double_writes was enabled during last crash.
+	 */
+	RecoverDoubleWriteFile();
+
 	/* REDO */
 	if (InRecovery)
 	{
@@ -8399,6 +8407,11 @@ ShutdownXLOG(int code, Datum arg)
 
 		CreateCheckPoint(CHECKPOINT_IS_SHUTDOWN | CHECKPOINT_IMMEDIATE);
 	}
+
+	/* Flush double-write buffer before shutting down */
+	FlushDoubleWriteBuffer(DWBUF_NON_CHECKPOINTER);
+	FlushDoubleWriteBuffer(DWBUF_CHECKPOINTER);
+
 	ShutdownCLOG();
 	ShutdownCommitTs();
 	ShutdownSUBTRANS();

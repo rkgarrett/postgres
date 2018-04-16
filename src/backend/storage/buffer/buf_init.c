@@ -71,6 +71,7 @@ InitBufferPool(void)
 				foundDescs,
 				foundIOLocks,
 				foundBufCkpt;
+	int			i;
 
 	/* Align descriptors to a cacheline boundary. */
 	BufferDescriptors = (BufferDescPadded *)
@@ -110,8 +111,6 @@ InitBufferPool(void)
 	}
 	else
 	{
-		int			i;
-
 		/*
 		 * Initialize all the buffer headers.
 		 */
@@ -142,6 +141,45 @@ InitBufferPool(void)
 		/* Correct last entry of linked list */
 		GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 	}
+
+	/*
+	 * Allocate shared region for the double-write buffers and info on the
+	 * state of the buffers.
+	 */
+	dwBlocks = (char *)
+		ShmemInitStruct("DW Buffer",
+						(NON_CKPT_DW_BLOCKS + CKPT_DW_BLOCKS) * BLCKSZ + BLCKSZ,
+						&foundBufs);
+	Assert(!foundBufs);
+	dwBlocks = (char *) TYPEALIGN(BLCKSZ, dwBlocks);
+
+	dwInfo = (struct DWBufferInfo *)
+		ShmemInitStruct("DW Info", 2 * sizeof(struct DWBufferInfo), &foundBufs);
+	Assert(!foundBufs);
+
+	dwInfo[DWBUF_NON_CHECKPOINTER].bufferStart = dwBlocks;
+	dwInfo[DWBUF_NON_CHECKPOINTER].writeLock = LWLockAssign();
+	dwInfo[DWBUF_NON_CHECKPOINTER].allocLock = LWLockAssign();
+	dwInfo[DWBUF_NON_CHECKPOINTER].length = NON_CKPT_DW_BLOCKS;
+	dwInfo[DWBUF_NON_CHECKPOINTER].mask = NON_CKPT_DW_BLOCKS - 1;
+	Assert(dwInfo[DWBUF_NON_CHECKPOINTER].length % batched_buffer_writes == 0);
+
+	/* Create one lock per batch */
+	for (i = 0; i < dwInfo[DWBUF_NON_CHECKPOINTER].length;
+		 i += batched_buffer_writes)
+		dwInfo[DWBUF_NON_CHECKPOINTER].batchLocks[i] = LWLockAssign();
+
+	dwInfo[DWBUF_CHECKPOINTER].bufferStart = dwBlocks +
+		dwInfo[DWBUF_NON_CHECKPOINTER].length * BLCKSZ;
+	dwInfo[DWBUF_CHECKPOINTER].writeLock = LWLockAssign();
+	dwInfo[DWBUF_CHECKPOINTER].length = CKPT_DW_BLOCKS;
+	dwInfo[DWBUF_CHECKPOINTER].mask = CKPT_DW_BLOCKS - 1;
+	Assert(dwInfo[DWBUF_CHECKPOINTER].length % batched_buffer_writes == 0);
+
+	/* Create one lock per batch */
+	for (i = 0; i < dwInfo[DWBUF_CHECKPOINTER].length;
+		 i += batched_buffer_writes)
+		dwInfo[DWBUF_CHECKPOINTER].batchLocks[i] = LWLockAssign();
 
 	/* Init other shared buffer-management stuff */
 	StrategyInitialize(!foundDescs);

@@ -47,6 +47,7 @@
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "storage/smgr.h"
+#include "storage/ioseq.h"
 #include "storage/standby.h"
 #include "utils/rel.h"
 #include "utils/resowner_private.h"
@@ -450,7 +451,8 @@ static BufferDesc *BufferAlloc(SMgrRelation smgr,
 			BlockNumber blockNum,
 			BufferAccessStrategy strategy,
 			bool *foundPtr);
-static void FlushBuffer(BufferDesc *buf, SMgrRelation reln);
+static void FlushBuffer(BufferDesc *buf, SMgrRelation reln,
+						bool needsDoubleWrite);
 static void AtProcExit_Buffers(int code, Datum arg);
 static void CheckForBufferLeaks(void);
 static int	rnode_comparator(const void *p1, const void *p2);
@@ -887,7 +889,7 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 			if (track_io_timing)
 				INSTR_TIME_SET_CURRENT(io_start);
 
-			smgrread(smgr, forkNum, blockNum, (char *) bufBlock);
+			smgrread(smgr, forkNum, blockNum, (char *) bufBlock, NULL);
 
 			if (track_io_timing)
 			{
@@ -1137,7 +1139,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 														  smgr->smgr_rnode.node.dbNode,
 														  smgr->smgr_rnode.node.relNode);
 
-				FlushBuffer(buf, NULL);
+				FlushBuffer(buf, NULL, true);
 				LWLockRelease(BufferDescriptorGetContentLock(buf));
 
 				ScheduleBufferTagForWriteback(&BackendWritebackContext,
@@ -1787,8 +1789,18 @@ BufferSync(int flags)
 	Oid			last_tsid;
 	binaryheap *ts_heap;
 	int			i;
+	int			seq_idx;
 	int			mask = BM_DIRTY;
 	WritebackContext wb_context;
+
+	//XXX: remove that later.
+#define DBLWRITE_DEBUG
+#ifdef DBLWRITE_DEBUG
+	int64           targetTime,
+		now,
+		start;
+	int                     cur_num_written;
+#endif
 
 	/* Make sure we can handle the pin inside SyncOneBuffer */
 	ResourceOwnerEnlargeBuffers(CurrentResourceOwner);
@@ -1835,6 +1847,9 @@ BufferSync(int flags)
 
 			buf_state |= BM_CHECKPOINT_NEEDED;
 
+			ioSeqList[num_to_write].idx = buf_id;
+			ioSeqList[num_to_write].tag = bufHdr->tag;
+
 			item = &CkptBufferIds[num_to_scan++];
 			item->buf_id = buf_id;
 			item->tsId = bufHdr->tag.rnode.spcNode;
@@ -1851,7 +1866,27 @@ BufferSync(int flags)
 
 	WritebackContextInit(&wb_context, &checkpoint_flush_after);
 
+	if (sortDirtyBuffers)
+	{
+		IOSeq_Sort(ioSeqList, num_to_write);
+		seqIdx = 0;
+	}
+	else
+	{
+		seqIdx = IOSeq_ClockStart(ioSeqList, num_to_write);
+	}
+
 	TRACE_POSTGRESQL_BUFFER_SYNC_START(NBuffers, num_to_scan);
+
+#ifdef DBLWRITE_DEBUG
+	if (log_checkpoints)
+		elog(LOG, "checkpoint: %d buffers to write", num_to_write);
+	/* Initialize some debug code for watching progress of the checkpoint. */
+	start = GetCurrentTimestamp();
+	/* Print out message every 30 seconds */
+	targetTime = start + 30000000;
+	cur_num_written = 0;
+#endif
 
 	/*
 	 * Sort buffers that need to be written to reduce the likelihood of random
@@ -2008,9 +2043,8 @@ BufferSync(int flags)
 			binaryheap_replace_first(ts_heap, PointerGetDatum(ts_stat));
 		}
 
-		/*
-		 * Sleep to throttle our I/O rate.
-		 */
+		//Maybe better sync strategy with double writes here??
+
 		CheckpointWriteDelay(flags, (double) num_processed / num_to_scan);
 	}
 
@@ -2391,7 +2425,7 @@ SyncOneBuffer(int buf_id, bool skip_recently_used, WritebackContext *wb_context)
 	PinBuffer_Locked(bufHdr);
 	LWLockAcquire(BufferDescriptorGetContentLock(bufHdr), LW_SHARED);
 
-	FlushBuffer(bufHdr, NULL);
+	FlushBuffer(bufHdr, NULL, true);
 
 	LWLockRelease(BufferDescriptorGetContentLock(bufHdr));
 
@@ -2576,6 +2610,16 @@ CheckPointBuffers(int flags)
 	TRACE_POSTGRESQL_BUFFER_CHECKPOINT_START(flags);
 	CheckpointStats.ckpt_write_t = GetCurrentTimestamp();
 	BufferSync(flags);
+	/*
+	 * Before completing the checkpoint, must be sure that what's
+	 * currently in the double-write buffers is flushed.
+	 */
+	FlushDoubleWriteBuffer(DWBUF_NON_CHECKPOINTER);
+	FlushDoubleWriteBuffer(DWBUF_CHECKPOINTER);
+	elog(LOG, "(%d, %d, %d), (%d, %d, %d), waits %d",
+		 dwInfo[0].start, dwInfo[0].endFill, dwInfo[0].readHits,
+		 dwInfo[1].start, dwInfo[1].endFill, dwInfo[1].readHits,
+		 dwInfo[0].fullWaits);
 	CheckpointStats.ckpt_sync_t = GetCurrentTimestamp();
 	TRACE_POSTGRESQL_BUFFER_CHECKPOINT_SYNC_START();
 	smgrsync();
@@ -2660,9 +2704,11 @@ BufferGetTag(Buffer buffer, RelFileNode *rnode, ForkNumber *forknum,
  *
  * If the caller has an smgr reference for the buffer's relation, pass it
  * as the second parameter.  If not, pass NULL.
+ *
+ * XXX: comment needed for needsDoubleWrite
  */
 static void
-FlushBuffer(BufferDesc *buf, SMgrRelation reln)
+FlushBuffer(BufferDesc *buf, SMgrRelation reln, bool needsDoubleWrite)
 {
 	XLogRecPtr	recptr;
 	ErrorContextCallback errcallback;
@@ -2752,7 +2798,8 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln)
 			  buf->tag.forkNum,
 			  buf->tag.blockNum,
 			  bufToWrite,
-			  false);
+			  false,
+			  needsDoubleWrite);
 
 	if (track_io_timing)
 	{
@@ -3137,6 +3184,11 @@ PrintPinnedBufs(void)
  *		more blocks of the relation; the effects can't be expected to last
  *		after the lock is released.
  *
+ *
+ *		If needsDoubleWrite is true, then the changed buffers should use
+ *		double-writing, if that option is enabled.  Currently, relation
+ *		changes that were not WAL-logged do not need double writes.
+ *
  *		XXX currently it sequentially searches the buffer pool, should be
  *		changed to more clever ways of searching.  This routine is not
  *		used in any performance-critical code paths, so it's not worth
@@ -3145,7 +3197,7 @@ PrintPinnedBufs(void)
  * --------------------------------------------------------------------
  */
 void
-FlushRelationBuffers(Relation rel)
+FlushRelationBuffers(Relation rel, bool needsDoubleWrite)
 {
 	int			i;
 	BufferDesc *bufHdr;
@@ -3181,7 +3233,7 @@ FlushRelationBuffers(Relation rel)
 						  bufHdr->tag.forkNum,
 						  bufHdr->tag.blockNum,
 						  localpage,
-						  false);
+						  false, needsDoubleWrites);
 
 				buf_state &= ~(BM_DIRTY | BM_JUST_DIRTIED);
 				pg_atomic_unlocked_write_u32(&bufHdr->state, buf_state);
@@ -3218,7 +3270,7 @@ FlushRelationBuffers(Relation rel)
 		{
 			PinBuffer_Locked(bufHdr);
 			LWLockAcquire(BufferDescriptorGetContentLock(bufHdr), LW_SHARED);
-			FlushBuffer(bufHdr, rel->rd_smgr);
+			FlushBuffer(bufHdr, rel->rd_smgr, needsDoubleWrites);
 			LWLockRelease(BufferDescriptorGetContentLock(bufHdr));
 			UnpinBuffer(bufHdr, true);
 		}
@@ -3272,7 +3324,8 @@ FlushDatabaseBuffers(Oid dbid)
 		{
 			PinBuffer_Locked(bufHdr);
 			LWLockAcquire(BufferDescriptorGetContentLock(bufHdr), LW_SHARED);
-			FlushBuffer(bufHdr, NULL);
+			/* XXX should be needDoubleWrites? */
+			FlushBuffer(bufHdr, NULL, false);
 			LWLockRelease(BufferDescriptorGetContentLock(bufHdr));
 			UnpinBuffer(bufHdr, true);
 		}

@@ -619,7 +619,7 @@ intorel_shutdown(DestReceiver *self)
 
 	/* If we skipped using WAL, must heap_sync before commit */
 	if (myState->hi_options & HEAP_INSERT_SKIP_WAL)
-		heap_sync(myState->rel);
+		heap_sync(myState->rel, false);
 
 	/* close rel, but keep lock until commit */
 	heap_close(myState->rel, NoLock);

@@ -178,7 +178,7 @@ spgbuildempty(Relation index)
 	 */
 	PageSetChecksumInplace(page, SPGIST_METAPAGE_BLKNO);
 	smgrwrite(index->rd_smgr, INIT_FORKNUM, SPGIST_METAPAGE_BLKNO,
-			  (char *) page, true);
+			  (char *) page, true, false);
 	log_newpage(&index->rd_smgr->smgr_rnode.node, INIT_FORKNUM,
 				SPGIST_METAPAGE_BLKNO, page, true);
 

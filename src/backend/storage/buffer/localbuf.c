@@ -218,6 +218,7 @@ LocalBufferAlloc(SMgrRelation smgr, ForkNumber forkNum, BlockNumber blockNum,
 				  bufHdr->tag.forkNum,
 				  bufHdr->tag.blockNum,
 				  localpage,
+				  false,
 				  false);
 
 		/* Mark not-dirty now in case we error out below */

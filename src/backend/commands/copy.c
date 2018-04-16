@@ -2888,7 +2888,7 @@ next_tuple:
 	 * indexes since those use WAL anyway)
 	 */
 	if (hi_options & HEAP_INSERT_SKIP_WAL)
-		heap_sync(cstate->rel);
+		heap_sync(cstate->rel, false);
 
 	return processed;
 }

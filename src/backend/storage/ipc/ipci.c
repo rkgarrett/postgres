@@ -35,6 +35,7 @@
 #include "replication/origin.h"
 #include "storage/bufmgr.h"
 #include "storage/dsm.h"
+#include "storage/ioseq.h"
 #include "storage/ipc.h"
 #include "storage/pg_shmem.h"
 #include "storage/pmsignal.h"
@@ -122,6 +123,9 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 		size = add_size(size, hash_estimate_size(SHMEM_INDEX_SIZE,
 												 sizeof(ShmemIndexEnt)));
 		size = add_size(size, BufferShmemSize());
+		size = add_size(size, IOSeq_ShmemSize());
+		size = add_size(size, (NON_CKPT_DW_BLOCKS + CKPT_DW_BLOCKS) *
+						BLCKSZ + BLCKSZ);
 		size = add_size(size, LockShmemSize());
 		size = add_size(size, PredicateLockShmemSize());
 		size = add_size(size, ProcGlobalShmemSize());
@@ -223,6 +227,7 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 	SUBTRANSShmemInit();
 	MultiXactShmemInit();
 	InitBufferPool();
+	IOSeq_Init();
 
 	/*
 	 * Set up lock manager

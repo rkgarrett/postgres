@@ -9351,16 +9351,20 @@ heap2_redo(XLogReaderState *record)
  * That behavior might change someday, but in any case it's likely that
  * any fsync decisions required would be per-index and hence not appropriate
  * to be done here.)
+ *
+ * If needsDoubleWrite is true, the changed buffers should use
+ * double-writing if that option is enabled.  Currently, relation changes
+ * that were not WAL-logged do not need double writes.
  */
 void
-heap_sync(Relation rel)
+heap_sync(Relation rel, bool needsDoubleWrite)
 {
 	/* non-WAL-logged tables never need fsync */
 	if (!RelationNeedsWAL(rel))
 		return;
 
 	/* main heap */
-	FlushRelationBuffers(rel);
+	FlushRelationBuffers(rel, needsDoubleWrite);
 	/* FlushRelationBuffers will have opened rd_smgr */
 	smgrimmedsync(rel->rd_smgr, MAIN_FORKNUM);
 
@@ -9372,7 +9376,7 @@ heap_sync(Relation rel)
 		Relation	toastrel;
 
 		toastrel = heap_open(rel->rd_rel->reltoastrelid, AccessShareLock);
-		FlushRelationBuffers(toastrel);
+		FlushRelationBuffers(toastrel, needsDoubleWrite);
 		smgrimmedsync(toastrel->rd_smgr, MAIN_FORKNUM);
 		heap_close(toastrel, AccessShareLock);
 	}

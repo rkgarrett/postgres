@@ -661,7 +661,7 @@ _bt_blwritepage(BTWriteState *wstate, Page page, BlockNumber blkno)
 	{
 		/* overwriting a block we zero-filled before */
 		smgrwrite(wstate->index->rd_smgr, MAIN_FORKNUM, blkno,
-				  (char *) page, true);
+				  (char *) page, true, false);
 	}
 
 	pfree(page);

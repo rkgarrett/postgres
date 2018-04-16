@@ -861,6 +861,56 @@ mdwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
+ * Write out a list of buffers, as specified in writeList.	If
+ * doubleWriteFile is >= 0, then also do double writes to the specified
+ * file (so full_page_writes can be avoided).
+ */
+void
+mdbwrite(int writeLen, struct SMgrWriteList *writeList,
+		 File doubleWriteFile, char *doubleBuf)
+{
+	off_t		seekpos;
+	int			nbytes;
+	MdfdVec    *v;
+	File		fd;
+	int			i;
+
+	for (i = 0; i < writeLen; i++)
+	{
+		struct SMgrWriteList *w = &(writeList[i]);
+
+		/* This assert is too expensive to have on normally ... */
+#ifdef CHECK_WRITE_VS_EXTEND
+		Assert(w->blockNum < mdnblocks(w->localrel, w->forknum));
+#endif
+		v = _mdfd_getseg(w->localrel, w->forkNum, w->blockNum, false, EXTENSION_FAIL);
+		fd = v->mdfd_vfd;
+
+		seekpos = (off_t) BLCKSZ *(w->blockNum % ((BlockNumber) RELSEG_SIZE));
+
+		Assert(seekpos < (off_t) BLCKSZ * RELSEG_SIZE);
+		w->fd = fd;
+		w->seekPos = seekpos;
+		w->len = BLCKSZ;
+	}
+
+	nbytes = FileBwrite(writeLen, writeList, doubleWriteFile, doubleBuf);
+	if (nbytes < 0)
+	{
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("FileBwrite error %d", errno)));
+	}
+
+	/*
+	 * XXX register_dirty_segment() call is not needed if we only do batched
+	 * writes for the double_write option.
+	 */
+}
+
+
+
+/*
  *	mdnblocks() -- Get the number of blocks stored in a relation.
  *
  *		Important side effect: all active segments of the relation are opened

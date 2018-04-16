@@ -104,6 +104,7 @@ extern int	wal_retrieve_retry_interval;
 extern char *XLogArchiveCommand;
 extern bool EnableHotStandby;
 extern bool fullPageWrites;
+extern bool double_writes;
 extern bool wal_log_hints;
 extern bool wal_compression;
 extern bool *wal_consistency_checking;
