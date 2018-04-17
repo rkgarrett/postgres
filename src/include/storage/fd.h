@@ -53,6 +53,14 @@ typedef int File;
 extern PGDLLIMPORT int max_files_per_process;
 
 /*
+ * Size of the header on the double-write file that describes the buffers
+ * currently written to the double-write file.
+ */
+#define DOUBLE_WRITE_HEADER_SIZE 4096
+
+struct SMgrWriteList;
+
+/*
  * This is private to fd.c, but exported for save/restore_backend_variables()
  */
 extern int	max_safe_fds;
@@ -71,6 +79,8 @@ extern int	FilePrefetch(File file, off_t offset, int amount, uint32 wait_event_i
 extern int	FileRead(File file, char *buffer, int amount, uint32 wait_event_info);
 extern int	FileWrite(File file, char *buffer, int amount, uint32 wait_event_info);
 extern int	FileSync(File file, uint32 wait_event_info);
+extern int FileBwrite(int writeLen, struct SMgrWriteList *writeList,
+		   File doubleWriteFile, char *doubleBuf);
 extern off_t FileSeek(File file, off_t offset, int whence);
 extern int	FileTruncate(File file, off_t offset, uint32 wait_event_info);
 extern void FileWriteback(File file, off_t offset, off_t nbytes, uint32 wait_event_info);

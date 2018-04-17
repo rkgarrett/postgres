@@ -189,7 +189,7 @@ extern BlockNumber BufferGetBlockNumber(Buffer buffer);
 extern BlockNumber RelationGetNumberOfBlocksInFork(Relation relation,
 								ForkNumber forkNum);
 extern void FlushOneBuffer(Buffer buffer);
-extern void FlushRelationBuffers(Relation rel);
+extern void FlushRelationBuffers(Relation rel, bool needsDoubleWrite);
 extern void FlushDatabaseBuffers(Oid dbid);
 extern void DropRelFileNodeBuffers(RelFileNodeBackend rnode,
 					   ForkNumber forkNum, BlockNumber firstDelBlock);

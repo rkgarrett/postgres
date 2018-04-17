@@ -180,7 +180,7 @@ extern void simple_heap_delete(Relation relation, ItemPointer tid);
 extern void simple_heap_update(Relation relation, ItemPointer otid,
 				   HeapTuple tup);
 
-extern void heap_sync(Relation relation);
+extern void heap_sync(Relation relation, bool needsDoubleWrite);
 extern void heap_update_snapshot(HeapScanDesc scan, Snapshot snapshot);
 
 /* in heap/pruneheap.c */

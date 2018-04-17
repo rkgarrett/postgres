@@ -71,6 +71,7 @@
 #include "storage/dsm_impl.h"
 #include "storage/standby.h"
 #include "storage/fd.h"
+#include "storage/ioseq.h"
 #include "storage/large_object.h"
 #include "storage/pg_shmem.h"
 #include "storage/proc.h"
@@ -482,6 +483,13 @@ int			tcp_keepalives_count;
  * renegotiation and therefore always try to zero it.
  */
 int			ssl_renegotiation_limit;
+
+bool		doubleWrites;
+char	   *double_write_directory;
+extern bool		fullPageWrites;
+
+bool		page_checksum = true;
+int			batched_buffer_writes = 0;
 
 /*
  * This really belongs in pg_shmem.c, but is defined here so that it doesn't
@@ -1043,6 +1051,14 @@ static struct config_bool ConfigureNamesBool[] =
 		&ignore_checksum_failure,
 		false,
 		NULL, NULL, NULL
+	},
+	{
+		{"double_writes", PGC_POSTMASTER, DEVELOPER_OPTIONS,
+			gettext_noop("Page writes are written first to a temporary file before being written to the database file."),
+			NULL
+		},
+		&doubleWrites,
+		false, NULL, NULL
 	},
 	{
 		{"zero_damaged_pages", PGC_SUSET, DEVELOPER_OPTIONS,
@@ -1798,6 +1814,23 @@ static struct config_bool ConfigureNamesBool[] =
 		&jit_tuple_deforming,
 		true,
 		NULL, NULL, NULL
+	},
+
+	{
+		{"page_checksum", PGC_POSTMASTER, CUSTOM_OPTIONS,
+			gettext_noop("enable disk page checksumming"),
+			NULL
+		},
+		&page_checksum, true, NULL, NULL
+	},
+
+	{
+		{"sort_dirty_buffers", PGC_POSTMASTER, DEVELOPER_OPTIONS,
+			gettext_noop("Sort dirty buffers before writing them out."),
+		    NULL,
+		    GUC_NOT_IN_SAMPLE
+		},
+		&sortDirtyBuffers, false, NULL, NULL
 	},
 
 	/* End-of-list marker */
@@ -3033,6 +3066,16 @@ static struct config_int ConfigureNamesInt[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"batched_buffer_writes", PGC_POSTMASTER, DEVELOPER_OPTIONS,
+			gettext_noop("Size of the block buffer for double writes."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&batched_buffer_writes,
+		64, 0, MAX_BATCH_BLOCKS, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, 0, 0, 0, NULL, NULL, NULL
@@ -3856,6 +3899,16 @@ static struct config_string ConfigureNamesString[] =
 		},
 		&jit_provider,
 		"llvmjit",
+		NULL, NULL, NULL
+	},
+
+	{
+		{"double_write_directory", PGC_POSTMASTER, DEVELOPER_OPTIONS,
+			gettext_noop("Location of the double write file."),
+			NULL,
+			GUC_REPORT | GUC_NOT_IN_SAMPLE
+		},
+		&double_write_directory,
 		NULL, NULL, NULL
 	},
 

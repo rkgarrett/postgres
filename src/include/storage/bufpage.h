@@ -156,6 +156,7 @@ typedef struct PageHeaderData
 	LocationIndex pd_special;	/* offset to start of special space */
 	uint16		pd_pagesize_version;
 	TransactionId pd_prune_xid; /* oldest prunable XID, or zero if none */
+	uint32		cksum;			/* page checksum. (XXX: incorrect!) */
 	ItemIdData	pd_linp[FLEXIBLE_ARRAY_MEMBER]; /* line pointer array */
 } PageHeaderData;
 
@@ -188,11 +189,12 @@ typedef PageHeaderData *PageHeader;
  * Release 8.3 uses 4; it changed the HeapTupleHeader layout again, and
  *		added the pd_flags field (by stealing some bits from pd_tli),
  *		as well as adding the pd_prune_xid field (which enlarges the header).
+ * Release x.y uses 5; we added checksums to heap/index/fsm files.
  *
  * As of Release 9.3, the checksum version must also be considered when
  * handling pages.
  */
-#define PG_PAGE_LAYOUT_VERSION		4
+#define PG_PAGE_LAYOUT_VERSION		5
 #define PG_DATA_CHECKSUM_VERSION	1
 
 /* ----------------------------------------------------------------

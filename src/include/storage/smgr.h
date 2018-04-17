@@ -15,8 +15,10 @@
 #define SMGR_H
 
 #include "fmgr.h"
+#include "fd.h"
 #include "storage/block.h"
 #include "storage/relfilenode.h"
+#include "access/xlogdefs.h"
 
 
 /*
@@ -80,6 +82,117 @@ typedef SMgrRelationData *SMgrRelation;
 #define SmgrIsTemp(smgr) \
 	RelFileNodeBackendIsTemp((smgr)->smgr_rnode)
 
+/* Number of blocks in the double-write buffer */
+#define MAX_DW_BLOCKS		128
+#define CKPT_DW_BLOCKS		64
+#define NON_CKPT_DW_BLOCKS	128
+
+/* Maximum number of blocks in a batch written all at once. */
+/* XXX How to make sure we can cache all needed fds in Vfd cache */
+#define MAX_BATCH_BLOCKS 64
+
+/* Maximum number of batches per double-write buffer */
+#define MAX_BATCHES_PER_DWBUF  8
+
+/*
+ * Element of an array specifying a buffer write in a list of buffer
+ * writes being batched.
+ */
+struct SMgrWriteList
+{
+	RelFileNodeBackend smgr_rnode;
+	ForkNumber	forkNum;
+	BlockNumber blockNum;
+	int			slot;
+	char	   *buffer;
+
+	SMgrRelation localrel;
+
+	/* Filled in by mdbwrite */
+	File		fd;
+	off_t		seekPos;
+	int			len;
+};
+
+#include "storage/lwlock.h"
+
+struct DWBufferInfo
+{
+	char *bufferStart;
+	/* length of this double-write buffer in blocks, power of 2 */
+	int length;
+	/* mask for modding index to circular buffer, equals (length-1) */
+	int mask;
+
+	/*
+	 * start, endAlloc, endFill are monotonically increasing, must
+	 * alwayed be modded by MAX_DW_BLOCKS to access writeList.
+	 */
+	/* Start of allocated entries in writeList, advanced as batches are
+	 * flushed out. */
+	volatile int start;
+	/* End of allocated entries */
+	volatile int endAlloc;
+	/* End of entries that have been filled in */
+	volatile int endFill;
+
+	/*
+	 * Lock protecting writeList and start/endFill/flushed
+	 */
+	LWLockId writeLock;
+	LWLockId allocLock;
+	/* Has this batch been flushed? */
+	int flushed[MAX_DW_BLOCKS];
+	/* Lock per batch */
+	LWLockId batchLocks[MAX_DW_BLOCKS];
+	struct SMgrWriteList writeList[MAX_DW_BLOCKS];
+
+	int readHits;
+	int fullWaits;
+};
+
+/*
+ * One double-write buffer for all processes except the checkpointer, and
+ * one double-write buffer for the checkpointer.
+ */
+#define DWBUF_NON_CHECKPOINTER 0
+#define DWBUF_CHECKPOINTER 1
+
+/*
+ * Description of one buffer in the double-write file, as listed in the
+ * header.
+ */
+struct DoubleBufItem
+{
+	/* Specification of where this buffer is in the database */
+	RelFileNodeBackend rnode;	/* physical relation identifier */
+	ForkNumber	forkNum;
+	BlockNumber blockNum;		/* blknum relative to begin of reln */
+	int			slot;			/* Slot where buffer is stored */
+
+	/* Checksum of the buffer. */
+	int32		cksum;
+	/* LSN of the buffer */
+	XLogRecPtr	pd_lsn;
+};
+
+/* Format of the header of the double-write file */
+struct DoubleBufHeader
+{
+	uint32		cksum;
+	int32		writeLen;
+	uint32		pad1;
+	uint32		pad2;
+	struct DoubleBufItem items[0];
+};
+
+extern char *dwBlocks;
+extern struct DWBufferInfo *dwInfo;
+extern int batched_buffer_writes;
+extern bool doubleWrites;
+extern bool page_checksum;
+
+
 extern void smgrinit(void);
 extern SMgrRelation smgropen(RelFileNode rnode, BackendId backend);
 extern bool smgrexists(SMgrRelation reln, ForkNumber forknum);
@@ -97,9 +210,12 @@ extern void smgrextend(SMgrRelation reln, ForkNumber forknum,
 extern void smgrprefetch(SMgrRelation reln, ForkNumber forknum,
 			 BlockNumber blocknum);
 extern void smgrread(SMgrRelation reln, ForkNumber forknum,
-		 BlockNumber blocknum, char *buffer);
+			BlockNumber blocknum, char *buffer, bool *cksumMismatch);
 extern void smgrwrite(SMgrRelation reln, ForkNumber forknum,
-		  BlockNumber blocknum, char *buffer, bool skipFsync);
+			BlockNumber blocknum, char *buffer, bool skipFsync,
+			bool dw);
+extern void smgrbwrite(int writeLen, struct SMgrWriteList *writeList,
+		   File doubleWriteFile);
 extern void smgrwriteback(SMgrRelation reln, ForkNumber forknum,
 			  BlockNumber blocknum, BlockNumber nblocks);
 extern BlockNumber smgrnblocks(SMgrRelation reln, ForkNumber forknum);
@@ -110,6 +226,9 @@ extern void smgrpreckpt(void);
 extern void smgrsync(void);
 extern void smgrpostckpt(void);
 extern void AtEOXact_SMgr(void);
+extern void FlushDoubleWriteBuffer(int dwIndex);
+extern char *DoubleWriteFileName(int index);
+extern void RecoverDoubleWriteFile(void);
 
 
 /* internals: move me elsewhere -- ay 7/94 */
@@ -128,6 +247,8 @@ extern void mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	   char *buffer);
 extern void mdwrite(SMgrRelation reln, ForkNumber forknum,
 		BlockNumber blocknum, char *buffer, bool skipFsync);
+extern void mdbwrite(int writeLen, struct SMgrWriteList *writeList,
+		 File doubleWriteFile, char *doublebuf);
 extern void mdwriteback(SMgrRelation reln, ForkNumber forknum,
 			BlockNumber blocknum, BlockNumber nblocks);
 extern BlockNumber mdnblocks(SMgrRelation reln, ForkNumber forknum);
